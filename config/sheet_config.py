@@ -4,7 +4,11 @@
 # ============================================================
 
 # Màu sắc (RGB tuple cho gspread)
-COLOR_CELL_DONE = {"red": 0.678, "green": 0.847, "blue": 0.902}   # xanh nhạt #ADD7E6
+COLOR_CELL_DONE = {"red": 0.678, "green": 0.847, "blue": 0.902    "WILLBE": {
+        "env_key": "SHEET_WILLBE_ID",
+        "checklist_col_a_name": "株式会社ウィルビー",
+    },
+}   # xanh nhạt #ADD7E6
 COLOR_TAB_DONE  = {"red": 0.267, "green": 0.533, "blue": 0.800}   # xanh dương #4488CC
 
 # Hàng chứa dữ liệu trong sheet thực thi

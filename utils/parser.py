@@ -16,6 +16,8 @@ COMPANY_KEYWORDS = {
     "たき航":  "TAKIKO",
     "takiko":  "TAKIKO",
     "taki":    "TAKIKO",
+    "ウィルビー": "WILLBE",
+    "willbe":   "WILLBE",
 }
 
 
