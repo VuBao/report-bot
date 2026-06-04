@@ -1,6 +1,6 @@
 # config/sheet_config.py
-COLOR_CELL_DONE = {"red": 0.678, "green": 0.847, "blue": 0.902}
-COLOR_TAB_DONE  = {"red": 0.267, "green": 0.533, "blue": 0.800}
+COLOR_CELL_DONE = {"red": 1.0, "green": 0.949, "blue": 0.8}
+COLOR_TAB_DONE  = {"red": 1.0, "green": 0.851, "blue": 0.4}
 
 ROW_DATE        = 2
 ROW_CURRENT     = 31
