@@ -123,7 +123,7 @@ def mark_checklist(employee_name, company_key):
             emp = employee_name.strip().upper()
             if cell_name and (emp in cell_name or cell_name in emp):
                 row_number = i + 1
-                worksheet.update_cell(row_number, col_e_idx + 1, "✓")
+                worksheet.update_cell(row_number, col_e_idx + 1, "△")
                 _apply_background(worksheet, row_number, COL_CHECKLIST_MARK, COLOR_CELL_DONE)
                 logger.info(f"[CHECKLIST] Check row {row_number} cho {employee_name}")
                 return True
