@@ -126,6 +126,11 @@ def mark_checklist(employee_name, company_key):
                 worksheet.update_cell(row_number, col_e_idx + 1, "△")
                 _apply_background(worksheet, row_number, COL_CHECKLIST_MARK, COLOR_CELL_DONE)
                 logger.info(f"[CHECKLIST] Check row {row_number} cho {employee_name}")
+                # Cập nhật count tại row 106
+                all_e = worksheet.col_values(col_e_idx + 1)
+                count_check = all_e.count("✓")
+                count_triangle = all_e.count("△")
+                worksheet.update_cell(106, col_e_idx + 1, f"✓{count_check} △{count_triangle}")
                 return True
 
     logger.warning(f"[CHECKLIST] Khong tim thay {employee_name}")
