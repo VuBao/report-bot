@@ -61,6 +61,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(f"Hoan tat {employee_name} - {file_name} - {checklist_status}")
     logger.info(f"[DONE] {employee_name} - {file_name}")
 
+    import asyncio
+    await asyncio.sleep(5)
+    try:
+        from services.ai_service import review_report
+        from config.sheet_config import COLOR_TAB_ERROR
+        from services.sheet_service import set_tab_color
+        review = review_report(raw_text, employee_name, ai_result["current_situation"], ai_result["future_plan"])
+        if review["passed"]:
+            review_msg = f"OK Review: {review['summary']}"
+        else:
+            issues = "\n".join([f"- {i}" for i in review["issues"]])
+            review_msg = f"Van de phat hien:\n{issues}\n{review['summary']}"
+            set_tab_color(spreadsheet_id, employee_name, COLOR_TAB_ERROR)
+        await message.reply_text(review_msg)
+        logger.info(f"[REVIEW] {employee_name} passed={review['passed']}")
+    except Exception as e:
+        logger.error(f"[REVIEW ERROR] {e}")
+
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
