@@ -72,6 +72,8 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
     import re
     for key in result:
         v = result[key]
+        v = re.sub(r'（GINO[^）]*）', '', v)
+        v = re.sub(r'\(GINO[^\)]*\)', '', v)
         v = re.sub(r'特定技能2号試験[^のをにはがもで。、\s　]*', '特定技能2号試験', v)
         v = re.sub(r'技能検定試験.{0,20}?GINO\d.{0,5}?', '特定技能2号試験', v)
         v = re.sub(r'GINO\d[級号]?試験', '特定技能2号試験', v)
