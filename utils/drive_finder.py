@@ -28,6 +28,8 @@ def _get_all_files():
         return []
 
 def _normalize(text):
+    import unicodedata
+    text = unicodedata.normalize('NFKC', text)
     return re.sub(r'[\s\u3000\u30FB\-\uff65\uff0e\u3002\u3001,./\\]','',text).upper()
 
 def find_spreadsheet_id(company_name):
