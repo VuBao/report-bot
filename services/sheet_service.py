@@ -59,8 +59,21 @@ def process_employee_sheet(spreadsheet_id, tab_name, row_future, current_situati
     spreadsheet = gc.open_by_key(spreadsheet_id)
 
     worksheet = _find_worksheet(spreadsheet, tab_name)
+    is_new_employee = False
     if worksheet is None:
-        return {"success": False, "error": f"Tab {tab_name} khong ton tai.", "duplicate": False}
+        logger.info(f"[NEW] Tab '{tab_name}' khong ton tai — tao moi tu tab cuoi")
+        worksheets = spreadsheet.worksheets()
+        last_sheet = worksheets[-1]
+        spreadsheet.batch_update({"requests": [{"duplicateSheet": {
+            "sourceSheetId": last_sheet.id,
+            "insertSheetIndex": len(worksheets),
+            "newSheetName": tab_name
+        }}]})
+        worksheet = spreadsheet.worksheet(tab_name)
+        for cell_range in ["B2:D2", "B3:C3", "B4", "B5:D5"]:
+            worksheet.batch_clear([cell_range])
+        is_new_employee = True
+        logger.info(f"[NEW] Tab '{tab_name}' da duoc tao")
 
     all_values = worksheet.get_all_values()
 
@@ -100,7 +113,7 @@ def process_employee_sheet(spreadsheet_id, tab_name, row_future, current_situati
     except Exception as e:
         logger.error(f"[TAB COLOR ERROR] {e}")
 
-    return {"success": True, "error": None, "duplicate": False}
+    return {"success": True, "error": None, "duplicate": False, "is_new_employee": is_new_employee}
 
 def mark_checklist(employee_name, company_key):
     gc = _get_client()
@@ -152,3 +165,54 @@ def set_tab_color(spreadsheet_id, tab_name, color):
         logger.info(f"[TAB COLOR] Tab '{tab_name}' doi mau")
     except Exception as e:
         logger.error(f"[TAB COLOR ERROR] {e}")
+
+
+def duplicate_last_sheet(spreadsheet_id, new_tab_name):
+    gc = _get_client()
+    spreadsheet = gc.open_by_key(spreadsheet_id)
+    worksheets = spreadsheet.worksheets()
+    last_sheet = worksheets[-1]
+    
+    # Duplicate tab cuoi cung
+    spreadsheet.batch_update({"requests": [{
+        "duplicateSheet": {
+            "sourceSheetId": last_sheet.id,
+            "insertSheetIndex": len(worksheets),
+            "newSheetName": new_tab_name
+        }
+    }]})
+    
+    # Lay tab moi
+    new_ws = spreadsheet.worksheet(new_tab_name)
+    
+    # Xoa thong tin ca nhan
+    cells_to_clear = ["B2:D2", "B3:C3", "B4", "B5:D5"]
+    for cell_range in cells_to_clear:
+        new_ws.batch_clear([cell_range])
+    
+    logger.info(f"[DUPLICATE] Tab '{new_tab_name}' da duoc tao tu '{last_sheet.title}'")
+    return new_ws
+
+
+def add_checklist_note(employee_name, company_name, note):
+    gc = _get_client()
+    checklist_id = os.getenv("SHEET_CHECKLIST_ID")
+    tab_name = os.getenv("CHECKLIST_TAB_NAME", "CHECK LIST")
+    spreadsheet = gc.open_by_key(checklist_id)
+    worksheet = _find_worksheet(spreadsheet, tab_name)
+    if worksheet is None:
+        logger.error(f"[CHECKLIST NOTE] Tab khong tim thay")
+        return False
+    all_values = worksheet.get_all_values()
+    col_c_idx = 2
+    col_f_idx = 5
+    for i, row in enumerate(all_values):
+        if len(row) > col_c_idx:
+            cell_name = row[col_c_idx].strip().upper()
+            emp = employee_name.strip().upper()
+            if cell_name and (emp in cell_name or cell_name in emp):
+                worksheet.update_cell(i + 1, col_f_idx + 1, note)
+                logger.info(f"[CHECKLIST NOTE] Row {i+1}: {note}")
+                return True
+    logger.warning(f"[CHECKLIST NOTE] Khong tim thay {employee_name}")
+    return False

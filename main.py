@@ -57,6 +57,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     checked = mark_checklist(employee_name, company_name)
+    # Neu la nhan vien moi, them note vao checklist
+    if result.get("is_new_employee"):
+        from services.sheet_service import add_checklist_note
+        add_checklist_note(employee_name, company_name, "Cần thêm thông tin cá nhân đang còn thiếu")
     checklist_status = "Da check CHECK LIST" if checked else "Khong tim thay ten trong CHECK LIST"
     await message.reply_text(f"Hoan tat {employee_name} - {file_name} - {checklist_status}")
     logger.info(f"[DONE] {employee_name} - {file_name}")
