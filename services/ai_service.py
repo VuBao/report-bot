@@ -80,3 +80,52 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
     if "current_situation" not in result or "future_plan" not in result:
         raise ValueError(f"Claude tra ve thieu key: {list(result.keys())}")
     return result
+
+
+REVIEW_PROMPT = '''
+あなたは特定技能支援報告書の品質管理担当者です。
+以下の【元の入力】と【AIが作成した報告書】を比較し、3つの観点で審査してください。
+
+【審査基準】
+1. 内容の正確性: 元の入力情報が漏れなく報告書に反映されているか
+2. 入力と出力の整合性: 報告書の内容が入力内容と矛盾していないか
+3. 入管文書としての適切性: 敬体・ビジネス日本語・入管提出水準を満たしているか
+
+【出力ルール】
+- JSON形式のみ出力すること
+- キーは "passed" (bool), "issues" (list of str), "summary" (str) の3つのみ
+- passedがtrueの場合、issuesは空リスト
+- summaryは1〜2文で全体評価を述べること
+- マークダウン記号は使わないこと
+'''
+
+def review_report(raw_text: str, employee_name: str, current_situation: str, future_plan: str) -> dict:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY chua duoc cau hinh")
+    client = anthropic.Anthropic(api_key=api_key)
+    user_content = f"""対象者氏名: {employee_name}
+
+【元の入力】
+{raw_text}
+
+【AIが作成した報告書】
+■ 3ヶ月間の総評:
+{current_situation}
+
+■ 今後の目標:
+{future_plan}
+"""
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1000,
+        system=REVIEW_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    return json.loads(raw)

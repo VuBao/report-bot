@@ -135,3 +135,20 @@ def mark_checklist(employee_name, company_key):
 
     logger.warning(f"[CHECKLIST] Khong tim thay {employee_name}")
     return False
+
+
+def set_tab_color(spreadsheet_id, tab_name, color):
+    gc = _get_client()
+    spreadsheet = gc.open_by_key(spreadsheet_id)
+    worksheet = _find_worksheet(spreadsheet, tab_name)
+    if worksheet is None:
+        logger.error(f"[TAB COLOR] Tab '{tab_name}' khong tim thay")
+        return
+    try:
+        spreadsheet.batch_update({"requests": [{"updateSheetProperties": {
+            "properties": {"sheetId": worksheet.id, "tabColor": color},
+            "fields": "tabColor"
+        }}]})
+        logger.info(f"[TAB COLOR] Tab '{tab_name}' doi mau")
+    except Exception as e:
+        logger.error(f"[TAB COLOR ERROR] {e}")
