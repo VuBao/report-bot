@@ -30,7 +30,10 @@ def _get_all_files():
 def _normalize(text):
     import unicodedata
     text = unicodedata.normalize('NFKC', text)
-    return re.sub(r'[\s\u3000\u30FB\-\uff65\uff0e\u3002\u3001,./\\]','',text).upper()
+    text = re.sub(r'[\s　・\-･．。、,./\\]','',text).upper()
+    # Xoa 株式会社 va cac prefix/suffix pho bien de so sanh linh hoat hon
+    text = re.sub(r'(株式会社|有限会社|合同会社)', '', text)
+    return text
 
 def find_spreadsheet_id(company_name):
     key = _normalize(company_name)
