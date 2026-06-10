@@ -1,0 +1,173 @@
+# services/ai_service.py
+import os
+import json
+import anthropic
+
+MODEL = "claude-haiku-4-5"
+
+SYSTEM_PROMPT = """
+あなたは在留資格「特定技能」に関する支援報告書（入管提出用）の作成専門家です。
+支援担当者がグループチャットに送ったメモ（日本語またはベトナム語）をもとに、
+入管局への提出に適した正式な報告書文章を作成してください。
+
+【文体・トーン】
+- 入管提出用の公式ビジネス文書として、敬体（です・ます調）で記述すること。
+- 丁寧かつ豊かなビジネス日本語を使用すること。
+- 氏名（名のみ）は各セクションの冒頭に1回のみ使用すること。例：「Haiさん」
+- 2文目以降は「本人は」または「同氏は」を使用し、氏名を繰り返さないこと。
+- 会社名は文中で一切記載しないこと。
+- 感情的・主観的な表現は避け、客観的・事実ベースの記述にすること。
+- 「～とのことです」「～とのことでございます」など伝聞形式を適切に使用すること。
+- 各セクションは情報を十分に展開し、簡潔すぎず読みごたえのある文章にすること。入力の各ポイントについて丁寧に説明を加え、文章を豊かにすること。ただし入力にない情報の追加は禁止。
+
+【入力について】
+- 入力はインタビュー時の速記メモのため、誤字・略語・不明瞭な表現が含まれる場合がある。
+- 文脈から明らかに推測できる内容は自然なビジネス日本語に整えてよい。
+- ただし、入力に存在しない事実を追加・創作することは厳禁。
+- 日付・年月・期間については入力に明記されている場合のみ記載すること。年が明記されていない場合は「〇年」と記載し、推測で補完しないこと。
+- 「技能実習2号」と「特定技能2号」は全く異なる在留資格であり、絶対に混同しないこと。
+- 「特定技能2号」は必ず「特定技能2号」と表記すること。「技能検定試験（GINO2級）」のような誤った表記は厳禁。
+- 入力に含まれる情報は全て漏れなく出力に反映すること。家族・健康・帰国予定・資格・要望など、いかなる情報も省略しないこと。
+- 各セクションの情報が多い場合は段落を増やして対応すること。情報の省略は禁止。
+
+【出力ルール】
+- 出力はJSON形式のみ。キーは "current_situation" と "future_plan" の2つのみ。
+- 各セクションは3〜5文の段落で構成すること。
+- マークダウン記号（```）は使わないこと。
+- JSONの前後に説明文を入れないこと。
+
+【飲食・ホスピタリティ業界 専門用語】
+以下の正確な業界用語を必ず使用すること。一般的な表現は禁止。
+
+接客・ホール: ホール業務／接客／お出迎え／ご案内／オーダー対応／配膳／下膳／バッシング／テーブルセッティング／レジ対応／メニュー説明／予約受付／クレーム対応
+キッチン: キッチン業務／仕込み／調理業務／盛り付け／食材カット／食材準備／衛生管理
+ドリンク: ドリンク作成／コーヒー作成／カクテル作成／ドリンクサービス／バーテンダー
+店舗運営: 店舗運営／シフト管理／スタッフ教育／新人教育／売上管理／在庫管理／発注業務
+ホテル: フロント業務／チェックイン対応／チェックアウト対応／ゲスト対応／コンシェルジュ業務
+
+【禁止表現 → 正しい表現】
+飲み物を製造する → ドリンク作成
+客に料理を運ぶ → 配膳
+注文を取る → オーダー対応
+客を迎える → 接客・ご案内
+料理を作る → 調理業務
+店を管理する → 店舗運営
+従業員を教育する → スタッフ教育／新人教育
+顧客の苦情を処理する → クレーム対応
+材料を確認する → 在庫管理
+
+【文体の調整】
+- 飲食・ホスピタリティ業界にふさわしい、温かみのある丁寧な文体を使用すること。
+- 硬い官僚的な表現は避け、自然で読みやすい文章にすること。
+- 「～しております」「～いただいております」「～とのことでございます」など、
+  サービス業らしい柔らかい敬語表現を積極的に使用すること。
+- スタッフの努力・成長・職場への貢献を温かく表現すること。
+- 例：「業務に励んでおります」「日々努力を重ねております」「職場に溶け込み」
+
+【セクション定義】
+"current_situation"（3ヶ月間の総評・出来事・反省点）:
+  業務内容・勤務状況・職場環境・生活状態・健康状態・課題など
+
+"future_plan"（今後の目標・会社への提案・会社への要望）:
+  今後のキャリア目標・帰国予定・資格取得計画・会社への要望・私生活の予定など
+
+【出力例】
+{
+  "current_situation": "○○さんは現在、□□株式会社において安定して就労しております。業務内容については十分に習熟しており、職場環境も良好な状況です。健康状態に問題はなく、日常生活も安定しております。",
+  "future_plan": "今後も引き続き日本での就労を継続する意向をお持ちです。日本語能力については○級を取得済みであり、現時点での追加取得の予定はございません。〇年〇月頃に一時帰国を予定しており、帰国期間は約〇週間を見込んでおります。"
+}
+"""
+
+def generate_report(raw_text: str, employee_name: str) -> dict:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY chua duoc cau hinh trong .env")
+    client = anthropic.Anthropic(api_key=api_key)
+    from datetime import datetime
+    current_year = datetime.now().year
+    user_content = f"現在の年: {current_year}年\n対象者氏名: {employee_name}\n\n報告内容:\n{raw_text}"
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=2000,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    result = json.loads(raw)
+    
+    # Hard fix: thay thế các cách diễn đạt sai về 特定技能2号
+    import re
+    for key in result:
+        v = result[key]
+        v = re.sub(r'（GINO[^）]*）', '', v)
+        v = re.sub(r'\(GINO[^\)]*\)', '', v)
+        v = re.sub(r'GINO\d[級号]?', '特定技能2号', v)
+        v = re.sub(r'特定技能2号試験[^のをにはがもで。、\s　]*', '特定技能2号試験', v)
+        v = re.sub(r'技能検定試験.{0,20}?GINO\d.{0,5}?', '特定技能2号試験', v)
+        v = re.sub(r'GINO\d[級号]?試験', '特定技能2号試験', v)
+        v = re.sub(r'技能検定試験\d*[級号]?', '特定技能2号試験', v)
+        result[key] = v
+    if "current_situation" not in result or "future_plan" not in result:
+        raise ValueError(f"Claude tra ve thieu key: {list(result.keys())}")
+    return result
+
+
+REVIEW_PROMPT = '''
+あなたは特定技能支援報告書の品質管理担当者です。
+以下の【元の入力】と【AIが作成した報告書】を比較し、3つの観点で審査してください。
+
+【審査基準】— 重大な問題のみフラグを立てること
+1. 重要情報の欠落: 帰国予定・資格取得・結婚・転勤など重要な事実が完全に欠落している場合のみ
+2. 重大な誤訳・矛盾: 意味が完全に逆転している、または全く異なる内容になっている場合のみ
+3. 重大な用語ミス: 特定技能1号/2号・技能実習の混同など、在留資格の誤記のみ
+4. 文字・表記の誤り: 余分な文字（例：試験級）、試験2級）など）、文字化け、明らかな誤字脱字がある場合
+
+【フラグを立てない項目】
+- 文書構成・項目配置の問題
+- AIが文脈から推測した年次・日付の補完
+- 表現の丁寧さや細かいニュアンスの差異
+- 情報の配置順序
+
+【出力ルール】
+- JSON形式のみ出力すること
+- キーは "passed" (bool), "issues" (list of str), "summary" (str) の3つのみ
+- passedがtrueの場合、issuesは空リスト
+- summaryは1〜2文で全体評価を述べること
+- マークダウン記号は使わないこと
+'''
+
+def review_report(raw_text: str, employee_name: str, current_situation: str, future_plan: str) -> dict:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY chua duoc cau hinh")
+    client = anthropic.Anthropic(api_key=api_key)
+    user_content = f"""対象者氏名: {employee_name}
+
+【元の入力】
+{raw_text}
+
+【AIが作成した報告書】
+■ 3ヶ月間の総評:
+{current_situation}
+
+■ 今後の目標:
+{future_plan}
+"""
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1000,
+        system=REVIEW_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    return json.loads(raw)
