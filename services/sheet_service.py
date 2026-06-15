@@ -133,8 +133,9 @@ def mark_checklist(employee_name, company_key):
     for i, row in enumerate(all_values):
         if len(row) > col_c_idx:
             cell_name = row[col_c_idx].strip().upper()
-            emp = employee_name.strip().upper()
-            if cell_name and (emp in cell_name or cell_name in emp):
+            emp = ' '.join(employee_name.strip().upper().split())
+            cell_clean = ' '.join(cell_name.split())
+            if cell_clean and (emp in cell_clean or cell_clean in emp):
                 row_number = i + 1
                 worksheet.update_cell(row_number, col_e_idx + 1, "△")
                 _apply_background(worksheet, row_number, COL_CHECKLIST_MARK, COLOR_CELL_DONE)
@@ -205,8 +206,9 @@ def add_checklist_note(employee_name, company_name, note):
     for i, row in enumerate(all_values):
         if len(row) > col_c_idx:
             cell_name = row[col_c_idx].strip().upper()
-            emp = employee_name.strip().upper()
-            if cell_name and (emp in cell_name or cell_name in emp):
+            emp = ' '.join(employee_name.strip().upper().split())
+            cell_clean = ' '.join(cell_name.split())
+            if cell_clean and (emp in cell_clean or cell_clean in emp):
                 worksheet.update_cell(i + 1, col_f_idx + 1, note)
                 logger.info(f"[CHECKLIST NOTE] Row {i+1}: {note}")
                 return True
