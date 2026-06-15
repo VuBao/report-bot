@@ -31,8 +31,10 @@ def _normalize(text):
     import unicodedata
     text = unicodedata.normalize('NFKC', text)
     text = re.sub(r'[\s　・\-･．。、,./\\]','',text).upper()
-    # Xoa 株式会社 va cac prefix/suffix pho bien de so sanh linh hoat hon
+    # Xoa 株式会社 va cac prefix/suffix pho bien
     text = re.sub(r'(株式会社|有限会社|合同会社)', '', text)
+    # Xoa ten chi nhanh (店・支店・本店・店舗・営業所)
+    text = re.sub(r'[^　-鿿]*?(店|支店|本店|店舗|営業所)$', '', text)
     return text
 
 def find_spreadsheet_id(company_name):
