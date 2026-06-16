@@ -158,7 +158,7 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
     client = anthropic.Anthropic(api_key=api_key)
     from datetime import datetime
     current_year = datetime.now().year
-    user_content = f"現在の年: {current_year}年\n対象者氏名: {employee_name}\n\n報告内容:\n{raw_text}"
+    user_content = f"現在の年: {current_year}年\n対象者氏名: {employee_name}\n※「対象者は」という表現は使用禁止。必ず名前の一部＋さんを使用すること（例：Kiênさん）\n\n報告内容:\n{raw_text}"
     response = client.messages.create(
         model=MODEL,
         max_tokens=2000,
