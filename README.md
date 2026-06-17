@@ -109,3 +109,4 @@ report-bot/
 └── utils/
     └── parser.py            # Nhận dạng công ty + tên ứng viên
 ```
+# auto-deploy test
