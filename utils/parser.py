@@ -1,6 +1,14 @@
 import re
 
 def detect_employee_name(text):
+    """Tên ứng viên luôn ở dòng 2 (sau tên công ty)."""
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    if len(lines) >= 2:
+        # Dong 2 phai la chu hoa
+        candidate = lines[1].strip()
+        if re.match(r"^[A-Z\s]+$", candidate) and len(candidate) > 3:
+            return candidate
+    # Fallback: tim ten dai nhat
     pattern = r"\b([A-Z]{2,}(?:\s+[A-Z]{2,}){1,4})\b"
     matches = re.findall(pattern, text)
     if matches:
