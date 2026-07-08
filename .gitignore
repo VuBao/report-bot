@@ -1,2 +1,5 @@
 .env
 config/service_account.json
+.env.save
+__pycache__/
+*.pyc

@@ -1,15 +1,18 @@
 # utils/drive_finder.py
 import os, logging, re
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly","https://www.googleapis.com/auth/spreadsheets"]
-FOLDER_ID = "18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC"
+DEFAULT_FOLDER_ID = "18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC"
 _cache = {}
 _files_cache = None
 
 def _get_drive_service():
+    try:
+        from googleapiclient.discovery import build
+    except ImportError as e:
+        raise RuntimeError("Thieu dependency google-api-python-client. Hay cai lai requirements.txt") from e
     creds = Credentials.from_service_account_file(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON","./config/service_account.json"),scopes=SCOPES)
     return build("drive","v3",credentials=creds)
 
@@ -19,18 +22,31 @@ def _get_all_files():
         return _files_cache
     try:
         service = _get_drive_service()
-        results = service.files().list(q=f"'{FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",fields="files(id, name)",pageSize=100).execute()
-        _files_cache = results.get("files",[])
+        folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", DEFAULT_FOLDER_ID)
+        files = []
+        page_token = None
+        while True:
+            results = service.files().list(
+                q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
+                fields="nextPageToken, files(id, name)",
+                pageSize=1000,
+                pageToken=page_token,
+            ).execute()
+            files.extend(results.get("files",[]))
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+        _files_cache = files
         logger.info(f"[DRIVE] Loaded {len(_files_cache)} files")
         return _files_cache
     except Exception as e:
-        logger.error(f"[DRIVE ERROR] {e}")
-        return []
+        logger.exception(f"[DRIVE ERROR] {e}")
+        raise RuntimeError(f"Loi Google Drive: {e}") from e
 
 def _normalize(text):
     import unicodedata
     text = unicodedata.normalize('NFKC', text)
-    text = re.sub(r'[\s　・\-･．。、,./\\]','',text).upper()
+    text = re.sub(r'[\s　・\-—–･．。、,./\\]','',text).upper()
     # Xoa 株式会社 va cac prefix/suffix pho bien
     text = re.sub(r'(株式会社|有限会社|合同会社)', '', text)
     # Xoa ten chi nhanh (店・支店・本店・店舗・営業所)

@@ -1,9 +1,11 @@
 # services/ai_service.py
 import os
 import json
-import anthropic
+import re
 
-MODEL = "claude-haiku-4-5"
+DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+MODEL = DEFAULT_ANTHROPIC_MODEL
 
 SYSTEM_PROMPT = """
 あなたは特定技能外国人の定期面談内容をまとめ、入国在留管理庁への報告書を作成する担当者です。
@@ -151,44 +153,120 @@ SYSTEM_PROMPT = """
 
 """
 
-def generate_report(raw_text: str, employee_name: str) -> dict:
+def _select_provider():
+    provider = os.getenv("AI_PROVIDER", "auto").strip().lower()
+    if provider in ("openai", "anthropic"):
+        return provider
+    if provider != "auto":
+        raise ValueError("AI_PROVIDER khong hop le. Chi ho tro: auto, openai, anthropic")
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    raise ValueError("Chua cau hinh AI. Hay them OPENAI_API_KEY hoac ANTHROPIC_API_KEY vao .env")
+
+def _strip_json_fence(raw):
+    raw = raw.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.lstrip().startswith("json"):
+            raw = raw.lstrip()[4:]
+    return raw.strip()
+
+def _loads_json(raw):
+    clean = _strip_json_fence(raw)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError as e:
+        preview = clean[:300].replace("\n", " ")
+        raise ValueError(f"AI tra ve JSON khong hop le: {e}. Noi dung dau: {preview}") from e
+
+def _apply_term_fixes(result):
+    for key, value in list(result.items()):
+        if not isinstance(value, str):
+            continue
+        value = re.sub(r'（GINO[^）]*）', '', value)
+        value = re.sub(r'\(GINO[^\)]*\)', '', value)
+        value = re.sub(r'GINO\d[級号]?', '特定技能2号', value)
+        value = re.sub(r'特定技能2号試験[^のをにはがもで。、\s　]*', '特定技能2号試験', value)
+        value = re.sub(r'技能検定試験.{0,20}?GINO\d.{0,5}?', '特定技能2号試験', value)
+        value = re.sub(r'GINO\d[級号]?試験', '特定技能2号試験', value)
+        value = re.sub(r'技能検定試験\d*[級号]?', '特定技能2号試験', value)
+        result[key] = value
+    return result
+
+def _call_openai(system_prompt, user_content, max_tokens, model):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY chua duoc cau hinh trong .env")
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError("Thieu dependency openai. Hay cai lai requirements.txt") from e
+
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    )
+    return (response.choices[0].message.content or "").strip()
+
+def _call_anthropic(system_prompt, user_content, max_tokens, model):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY chua duoc cau hinh trong .env")
+    try:
+        import anthropic
+    except ImportError as e:
+        raise RuntimeError("Thieu dependency anthropic. Hay cai lai requirements.txt") from e
+
     client = anthropic.Anthropic(api_key=api_key)
-    from datetime import datetime
-    current_year = datetime.now().year
-    # Lay ten cuoi (last name part) de dung trong bao cao
-    last_name = employee_name.strip().split()[-1].upper()
-    user_content = f"現在の年: {current_year}年\n対象者氏名: {employee_name}\n※「対象者は」という表現は使用禁止。冒頭のみ「{last_name}さん」を使用し、2文目以降は「本人は」を使用すること。\n\n報告内容:\n{raw_text}"
     response = client.messages.create(
-        model=MODEL,
-        max_tokens=2000,
-        system=SYSTEM_PROMPT,
+        model=model,
+        max_tokens=max_tokens,
+        system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-    result = json.loads(raw)
-    
-    # Hard fix: thay thế các cách diễn đạt sai về 特定技能2号
-    import re
-    for key in result:
-        v = result[key]
-        v = re.sub(r'（GINO[^）]*）', '', v)
-        v = re.sub(r'\(GINO[^\)]*\)', '', v)
-        v = re.sub(r'GINO\d[級号]?', '特定技能2号', v)
-        v = re.sub(r'特定技能2号試験[^のをにはがもで。、\s　]*', '特定技能2号試験', v)
-        v = re.sub(r'技能検定試験.{0,20}?GINO\d.{0,5}?', '特定技能2号試験', v)
-        v = re.sub(r'GINO\d[級号]?試験', '特定技能2号試験', v)
-        v = re.sub(r'技能検定試験\d*[級号]?', '特定技能2号試験', v)
-        result[key] = v
+    return response.content[0].text.strip()
+
+def _call_ai(system_prompt, user_content, max_tokens, openai_model, anthropic_model):
+    provider = _select_provider()
+    if provider == "openai":
+        return _call_openai(system_prompt, user_content, max_tokens, openai_model)
+    return _call_anthropic(system_prompt, user_content, max_tokens, anthropic_model)
+
+def _build_report_user_content(raw_text: str, employee_name: str) -> str:
+    from datetime import datetime
+    current_year = datetime.now().year
+    last_name = employee_name.strip().split()[-1].upper()
+    return (
+        f"現在の年: {current_year}年\n"
+        f"対象者氏名: {employee_name}\n"
+        f"※「対象者は」という表現は使用禁止。冒頭のみ「{last_name}さん」を使用し、"
+        "2文目以降は「本人は」を使用すること。\n\n"
+        f"報告内容:\n{raw_text}"
+    )
+
+def generate_report(raw_text: str, employee_name: str) -> dict:
+    user_content = _build_report_user_content(raw_text, employee_name)
+    raw = _call_ai(
+        system_prompt=SYSTEM_PROMPT,
+        user_content=user_content,
+        max_tokens=2000,
+        openai_model=os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL)),
+        anthropic_model=os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL)),
+    )
+    result = _loads_json(raw)
+    result = _apply_term_fixes(result)
     if "current_situation" not in result or "future_plan" not in result:
-        raise ValueError(f"Claude tra ve thieu key: {list(result.keys())}")
+        raise ValueError(f"AI tra ve thieu key: {list(result.keys())}")
     return result
 
 
@@ -217,10 +295,6 @@ REVIEW_PROMPT = '''
 '''
 
 def review_report(raw_text: str, employee_name: str, current_situation: str, future_plan: str) -> dict:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY chua duoc cau hinh")
-    client = anthropic.Anthropic(api_key=api_key)
     user_content = f"""対象者氏名: {employee_name}
 
 【元の入力】
@@ -233,16 +307,11 @@ def review_report(raw_text: str, employee_name: str, current_situation: str, fut
 ■ 今後の目標:
 {future_plan}
 """
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
+    raw = _call_ai(
+        system_prompt=REVIEW_PROMPT,
+        user_content=user_content,
         max_tokens=1000,
-        system=REVIEW_PROMPT,
-        messages=[{"role": "user", "content": user_content}],
+        openai_model=os.getenv("OPENAI_REVIEW_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)),
+        anthropic_model=os.getenv("ANTHROPIC_REVIEW_MODEL", "claude-sonnet-4-6"),
     )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-    return json.loads(raw)
+    return _loads_json(raw)

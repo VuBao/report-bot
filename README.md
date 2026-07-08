@@ -44,19 +44,34 @@ cp .env.example .env
 
 ```
 TELEGRAM_BOT_TOKEN=xxx
+AI_PROVIDER=auto
 OPENAI_API_KEY=sk-xxx
+OPENAI_MODEL=gpt-4o-mini
+# Optional fallback only:
+# ANTHROPIC_API_KEY=sk-ant-xxx
+# ANTHROPIC_MODEL=claude-haiku-4-5
+GOOGLE_SERVICE_ACCOUNT_JSON=./config/service_account.json
+GOOGLE_DRIVE_FOLDER_ID=18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC
 SHEET_CHECKLIST_ID=1ldjiNnLFE18FNW8k6-n5ARsXY28fBu3ejzX9jxnJN4c
 SHEET_RAMURA_ID=1Fc4HnFvL5TyMPxblJT19mCth5ppb4tyn
 SHEET_BICHO_ID=1NjHNeUI7XQ_hjlZdv61kCz_MDyt_3Zdv
 SHEET_TAKIKO_ID=1-9gjxRudRUyau1NBZ3Awlodo-JRrr7aa
 ```
 
+`AI_PROVIDER=auto` sẽ dùng OpenAI khi có `OPENAI_API_KEY`. Anthropic chỉ là fallback tùy chọn nếu bạn tự cấu hình thêm.
+
+Nếu deploy qua GitHub Actions, đặt các giá trị sau trong GitHub repository secrets để workflow tự cập nhật `.env` trên VPS:
+
+- `OPENAI_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `OPENAI_MODEL` nếu muốn override model
+
 ---
 
 ## Bước 5 — Chạy bot
 
 ```bash
-python main.py
+python3 main.py
 ```
 
 ---
@@ -71,14 +86,23 @@ Gửi tin nhắn vào group Telegram theo format:
 [Nội dung báo cáo bằng tiếng Việt hoặc Nhật...]
 ```
 
+Hoặc:
+
+```
+ラムラ
+NGUYEN ANH HAO
+
+[Nội dung báo cáo bằng tiếng Việt hoặc Nhật...]
+```
+
 Bot sẽ tự động:
 1. Nhận dạng công ty và tên ứng viên
-2. Gửi sang ChatGPT để xử lý
-3. Điền vào ô B31 (tình hình) và B36/B33 (định hướng)
+2. Gửi sang AI provider được cấu hình để xử lý
+3. Tìm label trong tab và điền nội dung vào cột B
 4. Cập nhật ngày vào E2
 5. Tô màu xanh nhạt các ô đã xử lý
-6. Đổi tab sang màu xanh dương
-7. Check ✓ vào CHECK LIST cột E
+6. Đổi màu tab
+7. Đánh dấu CHECK LIST cột E
 
 ---
 
