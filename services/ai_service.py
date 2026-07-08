@@ -4,7 +4,7 @@ import json
 import re
 
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_OPENAI_MODEL = "gpt-4o"
 MODEL = DEFAULT_ANTHROPIC_MODEL
 
 SYSTEM_PROMPT = """
@@ -15,8 +15,18 @@ SYSTEM_PROMPT = """
 - 面談内容を正確に反映する
 - input にある情報のみ使用する
 - 推測・主観的コメントを加えない
-- 丁寧・客観的・読みやすい文体
+- 入国在留管理庁へ提出する支援実施状況・就労生活状況の報告として、丁寧・客観的・読みやすい文体にする
 - 正確性を文章の華やかさより優先する
+- 技術的な要約ではなく、本人の就労状況・生活状況・健康状態・日本語学習・在留資格上の希望が自然につながる報告文にする
+
+【文章品質ルール — 最重要】
+- 箇条書き的・機械的な翻訳にしないこと。
+- 入力に書かれた各事実を、入管提出用の自然な日本語として文脈化し、読み手が本人の状況を具体的に理解できる文章にすること。
+- 「安定している」「問題がない」だけで終わらせず、何が安定しているのか、どの面で問題がないのかを入力情報の範囲内で明確にすること。
+- 職場関係、生活基盤、日本語学習、健康状態、在留資格・特定技能2号への希望などは、入力に含まれる場合は必ず漏れなく反映すること。
+- 文章は自然な接続で展開し、単純な短文の連続を避けること。
+- 支援機関の報告文として客観的に書き、「本人は〜とのことです」「〜と述べています」「〜を希望しています」などの伝聞表現を適切に使うこと。
+- 読みやすさのために表現を補ってよいが、入力にない事実・評価・会社側の判断を創作しないこと。
 
 【必須ルール】
 1. 報告書の本文中に氏名を繰り返さないこと
@@ -53,6 +63,7 @@ SYSTEM_PROMPT = """
    - 会社への不満・ハラスメント・いじめ・労働争議・規律違反
    - 労災・在留状況・法的状況
    - 会社からの評価・実績・資格・将来の計画
+   - 「会社が支援する予定である」「合格できる見込みである」など、会社側や結果についての未確認の判断
 9. 情報が不明確・未定の場合は「言及がありません」を使用せず、不確かさを自然に表現すること。
    例：
    - 「まだ検討中とのことです」
@@ -124,6 +135,14 @@ SYSTEM_PROMPT = """
 【今後の目標・希望】に含める内容：
 日本語目標／資格取得予定／キャリア目標／給与・条件改善希望／帰国予定／将来計画
 
+【Nyukan向けの表現方針】
+- 報告書は「本人の現在の就労・生活がどのような状態か」「支援上確認すべき課題があるか」「今後どのような希望や目標があるか」が分かる内容にすること。
+- 職場で問題がない場合も、単に「問題ありません」とせず、同僚・上司との関係、職場で支援を受けられている状況、業務上の困難の有無を自然にまとめること。
+- 生活面では、同居家族、家庭の安定、日常生活上の困難の有無を、入力情報に沿って丁寧に記述すること。
+- 日本語学習は、現在のレベルだけでなく、仕事や長期的な生活のために継続しているという位置づけを、入力にある範囲で明確にすること。
+- 在留資格の期限、特定技能2号試験への希望、会社への支援希望、長期在留・就労希望は、将来計画として分かりやすく整理すること。
+- 健康状態は、就労継続に関する本人の状態として、入力にある範囲で具体的に記述すること。
+
 【出力例】
 以下は良質な出力の参考例です。このスタイルを参考にしてください。
 
@@ -141,6 +160,20 @@ SYSTEM_PROMPT = """
 
 出力例3：
 {"current_situation": "OANHさんは入社してから2年が経過し、現在は同僚のThuさんと協力しながら、日々の業務に責任を持って取り組んでいます。職場での人間関係は非常に良好で、トラブルもなく落ち着いて働けています。私生活面では、旧正月の後に一時帰国をしましたが、無事に日本に戻り、現在は仕事に専念しています。健康状態については特に大きな問題はありませんが、夜更かしが原因で目にクマができやすくなっているため、体調管理にはより一層注意していきたいと考えています。また、自宅から職場まで片道1時間ほどかかるため、通勤による疲れを感じることもありますが、休日は買い物などでリフレッシュし、前向きに業務に励んでいます。", "future_plan": "今後の目標として、現在特定技能1号から2号への移行を強く希望しており、会社試験登録の案内を待っている状態です。2年間の経験を活かし、さらに上のステップで会社に貢献したいと考えています。日本語の試験については、現在は日々の業務が忙しく、勉強時間の確保が難しいため改めて受験する予定はありませんが、現場でのコミュニケーションを大切にしていきます。私生活では彼氏（特定技能1号）がおりますが、現在は別々に暮らしており、結婚の予定もまだ先ですので、まずは今の仕事を一人前にこなすことに全力を尽くします。次回の帰国は来年の旧正月を予定しており、当面の間は帰国の予定はありません。"}
+
+入力例4（Nyukan向け・長めの面談メモ）：
+「株式会社TDM
+NGUYEN MINH QUAN
+
+Anh Quân cho biết công việc hiện tại diễn ra ổn định và không gặp bất kỳ khó khăn nào trong quá trình làm việc. Đồng nghiệp và cấp trên luôn nhiệt tình hướng dẫn, hỗ trợ khi cần thiết, môi trường làm việc hòa đồng, thân thiện. Đến thời điểm hiện tại, anh không có bất kỳ vướng mắc hay vấn đề nào liên quan đến công việc.
+
+Về cuộc sống, anh hiện đang sinh sống cùng vợ tại Nhật Bản. Cuộc sống gia đình ổn định, vợ chồng hòa thuận và không gặp khó khăn đáng kể trong sinh hoạt hằng ngày.
+Hiện tại, anh đã đạt trình độ tiếng Nhật N3 và vẫn đang tiếp tục học để nâng cao năng lực tiếng Nhật, phục vụ cho công việc cũng như định hướng phát triển lâu dài tại Nhật Bản.
+Theo kế hoạch, tư cách lưu trú Tokutei Ginou số 1 của anh sẽ hết hạn vào khoảng tháng 7 năm sau. Mong muốn lớn nhất của anh hiện nay là được tham gia kỳ thi Tokutei Ginou số 2 và rất mong công ty tạo điều kiện, hỗ trợ để anh có thể đạt được mục tiêu này. Anh cũng bày tỏ nguyện vọng tiếp tục sinh sống và làm việc lâu dài tại Nhật Bản.
+Về sức khỏe, hiện anh có tình trạng sức khỏe tốt, không mắc bệnh lý nghiêm trọng và hoàn toàn đủ điều kiện để tiếp tục làm việc ổn định。」
+
+出力例4：
+{"current_situation": "QUANさんは現在の業務について、特に大きな問題なく安定して勤務していると述べています。業務を行う中で困難を感じている点はなく、職場では同僚や上司から必要に応じて丁寧な指導や支援を受けられているとのことです。職場環境についても、周囲と協力しながら働きやすい雰囲気の中で勤務しており、現時点で仕事に関する不安や支障は確認されていません。生活面では、本人は現在妻と共に日本で生活しており、家庭生活は安定しているとのことです。夫婦関係も良好で、日常生活において大きな困難はなく、落ち着いた生活基盤の中で就労を継続できている状況です。日本語能力については、現在日本語能力試験N3相当の力を有しており、仕事での対応力を高めることや、今後も日本で安定して生活していくことを見据えて、引き続き日本語学習に取り組んでいるとのことです。健康状態については良好で、重大な疾病等はなく、現在のところ安定して勤務を続けるうえで支障となる健康上の問題はないとのことです。", "future_plan": "今後の希望として、本人は特定技能1号の在留資格が来年7月頃に期限を迎える予定であることを踏まえ、特定技能2号への移行を強く希望しています。そのため、特定技能2号の試験に参加したい意向を示しており、目標達成に向けて会社から受験機会や必要な情報提供などの支援を受けられることを望んでいるとのことです。また、本人は今後も日本での生活と就労を長期的に継続したい考えを持っており、そのためにも日本語能力の向上や業務への継続的な取り組みを大切にしていきたいと述べています。"}
 
 【出力ルール】
 - 各セクションは改行せず、1つの段落にまとめること。
@@ -209,7 +242,7 @@ def _call_openai(system_prompt, user_content, max_tokens, model):
     response = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
-        temperature=0,
+        temperature=0.2,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -259,7 +292,7 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
     raw = _call_ai(
         system_prompt=SYSTEM_PROMPT,
         user_content=user_content,
-        max_tokens=2000,
+        max_tokens=3000,
         openai_model=os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL)),
         anthropic_model=os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL)),
     )

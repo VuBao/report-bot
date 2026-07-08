@@ -46,7 +46,7 @@ cp .env.example .env
 TELEGRAM_BOT_TOKEN=xxx
 AI_PROVIDER=auto
 OPENAI_API_KEY=sk-xxx
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o
 # Optional fallback only:
 # ANTHROPIC_API_KEY=sk-ant-xxx
 # ANTHROPIC_MODEL=claude-haiku-4-5
