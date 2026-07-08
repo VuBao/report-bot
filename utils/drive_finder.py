@@ -1,4 +1,5 @@
 # utils/drive_finder.py
+import difflib
 import os, logging, re
 from google.oauth2.service_account import Credentials
 
@@ -46,12 +47,26 @@ def _get_all_files():
 def _normalize(text):
     import unicodedata
     text = unicodedata.normalize('NFKC', text)
+    # Normalize hiragana to katakana so ラーメン and らーめん can match.
+    text = ''.join(chr(ord(ch) + 0x60) if 'ぁ' <= ch <= 'ゖ' else ch for ch in text)
     text = re.sub(r'[\s　・\-—–･．。、,./\\]','',text).upper()
     # Xoa 株式会社 va cac prefix/suffix pho bien
     text = re.sub(r'(株式会社|有限会社|合同会社)', '', text)
     # Xoa ten chi nhanh (店・支店・本店・店舗・営業所)
     text = re.sub(r'[^　-鿿]*?(店|支店|本店|店舗|営業所)$', '', text)
     return text
+
+def _match_score(key, file_norm):
+    if key == file_norm:
+        return 1000
+    if key in file_norm or file_norm in key:
+        return 800 + min(len(key), len(file_norm))
+    common_chars = sum(min(key.count(ch), file_norm.count(ch)) for ch in set(key))
+    coverage = common_chars / max(len(key), 1)
+    similarity = difflib.SequenceMatcher(None, key, file_norm).ratio()
+    if coverage >= 0.75 and similarity >= 0.55:
+        return int(coverage * 100 + similarity * 100)
+    return 0
 
 def find_spreadsheet_id(company_name):
     key = _normalize(company_name)
@@ -62,18 +77,17 @@ def find_spreadsheet_id(company_name):
     best_score = 0
     for f in files:
         file_norm = _normalize(f["name"])
-        if key == file_norm:
+        score = _match_score(key, file_norm)
+        if score >= 1000:
             _cache[key] = (f["id"],f["name"])
             logger.info(f"[DRIVE EXACT] {f['name']}")
             return (f["id"],f["name"])
-        if key in file_norm or file_norm in key:
-            score = min(len(key),len(file_norm))
-            if score > best_score:
-                best_score = score
-                best_match = f
+        if score > best_score:
+            best_score = score
+            best_match = f
     if best_match:
         _cache[key] = (best_match["id"],best_match["name"])
-        logger.info(f"[DRIVE PARTIAL] {best_match['name']}")
+        logger.info(f"[DRIVE MATCH] {best_match['name']} score={best_score}")
         return (best_match["id"],best_match["name"])
     logger.warning(f"[DRIVE] Khong tim thay '{company_name}'")
     return (None,None)
