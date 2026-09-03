@@ -3,6 +3,7 @@ import os
 import logging
 import asyncio
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
@@ -20,7 +21,9 @@ from services.residence_card_service import (
     write_residence_card_form,
 )
 
-load_dotenv()
+# systemd may provide stale Environment values. The deployment workflow writes
+# the current secrets to this project-level .env, so it must be authoritative.
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 for noisy_logger in ("httpx", "httpcore", "telegram", "telegram.ext"):
     logging.getLogger(noisy_logger).setLevel(logging.WARNING)
