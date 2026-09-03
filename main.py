@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 CARD_ALBUMS = {}
 CARD_CONFIRMATIONS = {}
+PENDING_CARD_IMAGES = {}
 CARD_ALBUM_WAIT_SECONDS = 2
 CARD_CONFIRMATION_TTL_SECONDS = 15 * 60
+CARD_IMAGE_TTL_SECONDS = 5 * 60
 
 FORMAT_HINT = (
     "Format dung:\n"
@@ -84,7 +86,42 @@ async def _finalize_card_album(key, bot):
     if len(album["file_ids"]) not in {1, 2}:
         await message.reply_text("Chi gui 01 anh mat truoc, hoac toi da 02 anh the.\n\n" + CARD_FORMAT_HINT)
         return
+    if not album["caption"].strip():
+        await _store_card_images_for_payload(message, album["file_ids"])
+        return
     await _prepare_card_submission(message, album["file_ids"], album["caption"], bot)
+
+
+async def _store_card_images_for_payload(message, file_ids):
+    """Allow a user to send the card photos first and the text in the next message."""
+    PENDING_CARD_IMAGES[message.chat_id] = {
+        "expires_at": time.monotonic() + CARD_IMAGE_TTL_SECONDS,
+        "user_id": message.from_user.id if message.from_user else None,
+        "file_ids": file_ids,
+        "message": message,
+    }
+    await message.reply_text(
+        "Da nhan anh the. Hay gui tin nhan tiep theo gom: cong ty, ho ten, chi nhanh, "
+        "sau do la noi dung bao cao. Anh se het han sau 5 phut."
+    )
+
+
+async def _try_process_pending_card_images(message, bot):
+    pending = PENDING_CARD_IMAGES.get(message.chat_id)
+    if not pending:
+        return False
+    if pending["expires_at"] < time.monotonic():
+        PENDING_CARD_IMAGES.pop(message.chat_id, None)
+        return False
+    if pending["user_id"] is not None and message.from_user and pending["user_id"] != message.from_user.id:
+        return False
+    try:
+        _parse_card_payload(message.text)
+    except ValueError:
+        return False
+    PENDING_CARD_IMAGES.pop(message.chat_id, None)
+    await _prepare_card_submission(message, pending["file_ids"], message.text, bot)
+    return True
 
 
 async def _prepare_card_submission(message, file_ids, caption, bot):
@@ -137,6 +174,9 @@ async def handle_card_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message or not message.photo:
         return
     if not message.media_group_id:
+        if not (message.caption or "").strip():
+            await _store_card_images_for_payload(message, [message.photo[-1].file_id])
+            return
         await _prepare_card_submission(
             message,
             [message.photo[-1].file_id],
@@ -231,6 +271,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message or not message.text:
         return
     if await _handle_card_confirmation(message):
+        return
+    if await _try_process_pending_card_images(message, context.bot):
         return
     try:
         raw_text = message.text.strip()

@@ -112,7 +112,7 @@ Bot sẽ tự động:
 
 ### Nhập form từ thẻ ngoại kiều
 
-Gửi **01 ảnh mặt trước thẻ** kèm caption. Mặt sau là tùy chọn và có thể gửi cùng album. Caption phải có ba dòng đầu và nội dung báo cáo từ dòng thứ tư:
+Gửi **01 ảnh mặt trước thẻ**. Mặt sau là tùy chọn và có thể gửi cùng album. Bạn có thể đặt payload ở caption **hoặc** gửi nó bằng tin nhắn ngay sau ảnh (trong 5 phút). Payload phải có ba dòng đầu và nội dung báo cáo từ dòng thứ tư:
 
 ```text
 株式会社アスラポート

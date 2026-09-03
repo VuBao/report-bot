@@ -20,7 +20,7 @@ Không đọc, ghi, log hay trả lại số thẻ, quốc tịch, giới tính,
 
 ## Cú pháp gửi Telegram đã xác nhận
 
-Gửi ảnh **mặt trước** thẻ ngoại kiều kèm caption theo đúng mẫu. Có thể gửi thêm mặt sau trong cùng album nếu cần; ảnh thứ hai không phải điều kiện bắt buộc. Phần nội dung báo cáo bắt đầu từ dòng thứ tư:
+Gửi ảnh **mặt trước** thẻ ngoại kiều kèm caption theo đúng mẫu, hoặc gửi payload bằng tin nhắn liền sau ảnh (tối đa 5 phút). Có thể gửi thêm mặt sau trong cùng album nếu cần; ảnh thứ hai không phải điều kiện bắt buộc. Phần nội dung báo cáo bắt đầu từ dòng thứ tư:
 
 ```text
 株式会社アスラポート
