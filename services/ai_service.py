@@ -220,6 +220,8 @@ SYSTEM_PROMPT = """
 - 独立した事実が8件以上ある場合、各事実を申告者の視点が分かる完結した一文として展開し、
   current_situation は概ね450〜700字、future_plan は該当事実数に応じて150〜350字を目安とすること。
   事実を短い総評へ圧縮したり、複数の事実を一つの定型文へ置き換えたりしないこと。
+  この条件に当てはまる入力で current_situation が420字未満の出力は不合格である。出力前に
+  各事実が個別の文として残っていることを確認し、不足していれば原文の事実だけで書き直すこと。
   この字数は事実を追加する理由にしてはならず、全事実を明示した結果としてのみ用いること。
 - 読み取れない、矛盾する、意味が曖昧な箇所を推測で補わないこと。
 - 本人の感想（例：「仕事は簡単」「問題を感じない」）を客観的事実へ強めず、
@@ -402,6 +404,25 @@ def _review_passed(review):
     )
 
 
+def _detail_issues(raw_text: str, report: dict) -> list[str]:
+    """Reject overly compressed reports before they can reach a Sheet.
+
+    A long, pre-organised interview note contains many independent facts.  A
+    short Japanese summary can be factually true while still dropping the
+    useful detail required by a Nyukan report.  This is deliberately a retry
+    gate, not permission to invent text: the next model call receives the
+    original input and must expand only facts already present there.
+    """
+    source_size = len(re.sub(r"\s+", "", raw_text or ""))
+    current_size = len(re.sub(r"\s+", "", report.get("current_situation", "")))
+    if source_size >= 600 and current_size < 420:
+        return [
+            "情報量の多い原文に対して「3ヶ月間の総評」が短すぎます。原文の各独立した事実を"
+            "一つずつ丁寧な敬語の文として残し、原文にない情報を加えず420字以上に書き直してください。"
+        ]
+    return []
+
+
 def generate_report(raw_text: str, employee_name: str) -> dict:
     user_content = _build_report_user_content(raw_text, employee_name)
     openai_model = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL))
@@ -431,6 +452,12 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
                 anthropic_model=anthropic_model,
             )
             result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
+            detail_issues = _detail_issues(raw_text, result)
+            if detail_issues:
+                previous_report = result
+                review_issues = detail_issues
+                last_error = "Bao cao qua ngan so voi thong tin phong van"
+                continue
             review = review_report(
                 raw_text,
                 employee_name,
