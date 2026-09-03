@@ -95,9 +95,11 @@ def _formula_argument_separator(worksheet):
 def _summary_formulas(user_range, status_range, done_mark, separator):
     """Build locale-correct, live summary formulas for the checklist."""
     return [
-        [f'="Tổng user: "&COUNT({user_range})'],
+        # COUNTA counts both normal digits and full-width Japanese digits such
+        # as "１" that appear in the user-number column.
+        [f'="Tổng user: "&COUNTA({user_range})'],
         [f'="Đã xử lý: "&COUNTIF({status_range}{separator}"{done_mark}")'],
-        [f'="Còn lại: "&COUNT({user_range})-COUNTIF({status_range}{separator}"{done_mark}")'],
+        [f'="Còn lại: "&COUNTA({user_range})-COUNTIF({status_range}{separator}"{done_mark}")'],
     ]
 
 
@@ -111,9 +113,9 @@ def _clear_stale_summary_formulas(worksheet, first_row):
     for row_number, row in enumerate(formula_rows, start=first_row):
         value = row[0] if row else ""
         if isinstance(value, str) and value.startswith((
-            '="Tổng user: "&COUNT(',
+            '="Tổng user: "&COUNT',
             '="Đã xử lý: "&COUNTIF(',
-            '="Còn lại: "&COUNT(',
+            '="Còn lại: "&COUNT',
         )):
             stale_cells.append(f"{COL_CHECKLIST_MARK}{row_number}")
     if stale_cells:
