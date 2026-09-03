@@ -77,28 +77,20 @@ def _parse_card_payload(text):
     }
 
 
-def _card_preview_text(payload, card_values, report, company_form_will_be_created):
+def _card_preview_text(payload, card_values, company_form_will_be_created):
     form_notice = (
         "Chua co form cua cong ty: se tao tu COPY sau khi xac nhan.\n"
         if company_form_will_be_created else ""
     )
-    review_notice = (
-        "CAN KIEM TRA KY: bo doi chieu tu dong chua xac nhan hoan toan ban dich nay.\n\n"
-        if report.get("review_passed") is False else ""
-    )
     return (
         "Kiem tra truoc khi ghi (chi nguoi gui album moi duoc xac nhan):\n\n"
-        f"{review_notice}"
         f"Cong ty + chi nhanh: {payload['company_name']}     {payload['branch_name']}\n"
         f"Ho ten: {card_values['full_name']}\n"
         f"Ngay sinh: {card_values['date_of_birth']}\n"
         f"Dia chi: {card_values['address']}\n"
         f"Han visa: {card_values['visa_expiry']}\n\n"
-        "[3 thang - hien tai]\n"
-        f"{report['current_situation']}\n\n"
-        "[Muc tieu - ke hoach]\n"
-        f"{report['future_plan']}\n\n"
         f"{form_notice}"
+        "Bao cao da vuot qua vong doi chieu noi dung va se ghi vao B31/B33 sau khi xac nhan.\n"
         "Neu can sua dia chi, gui: DIA CHI: [dia chi dung]\n"
         "Tra loi XAC NHAN de ghi, hoac HUY de bo qua."
     )
@@ -173,7 +165,6 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
             generate_report,
             payload["report_text"],
             card_values["full_name"],
-            True,
         )
     except Exception as exc:
         logger.exception("[CARD PREPARE ERROR] %s", exc)
@@ -192,7 +183,7 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
         "company_form_will_be_created": spreadsheet_id is None,
     }
     await message.reply_text(
-        _card_preview_text(payload, card_values, report, spreadsheet_id is None)
+        _card_preview_text(payload, card_values, spreadsheet_id is None)
     )
 
 
@@ -254,7 +245,6 @@ async def _handle_card_confirmation(message):
             + _card_preview_text(
                 pending["payload"],
                 pending["card_values"],
-                pending["report"],
                 pending["company_form_will_be_created"],
             )
         )

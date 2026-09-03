@@ -6,6 +6,7 @@ import re
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 MODEL = DEFAULT_ANTHROPIC_MODEL
+REPORT_MAX_ATTEMPTS = 4
 
 LEGACY_SYSTEM_PROMPT = """
 あなたは特定技能外国人の定期面談内容をまとめ、入国在留管理庁への報告書を作成する担当者です。
@@ -393,58 +394,57 @@ def _review_passed(review):
     )
 
 
-def generate_report(raw_text: str, employee_name: str, allow_unverified_preview=False) -> dict:
+def generate_report(raw_text: str, employee_name: str) -> dict:
     user_content = _build_report_user_content(raw_text, employee_name)
     openai_model = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL))
     anthropic_model = os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL))
-    raw = _call_ai(
-        system_prompt=SYSTEM_PROMPT,
-        user_content=user_content,
-        max_tokens=4500,
-        openai_model=openai_model,
-        anthropic_model=anthropic_model,
-    )
-    result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
+    previous_report = None
+    review_issues = []
+    last_error = None
 
-    review = review_report(
-        raw_text,
-        employee_name,
-        result["current_situation"],
-        result["future_plan"],
-    )
-    review_passed = _review_passed(review)
-    if not review_passed:
-        revision_request = (
-            f"{user_content}\n\n"
-            "【前回の報告書】\n"
-            f"{json.dumps(result, ensure_ascii=False)}\n\n"
-            "【ファクトチェックで指摘された問題】\n"
-            f"{json.dumps(review.get('issues', []), ensure_ascii=False)}\n\n"
-            "原文だけを根拠に、全事実を漏れなく反映して報告書を修正してください。"
-        )
-        revised_raw = _call_ai(
-            system_prompt=SYSTEM_PROMPT,
-            user_content=revision_request,
-            max_tokens=4500,
-            openai_model=openai_model,
-            anthropic_model=anthropic_model,
-        )
-        result = _validate_report_result(_apply_term_fixes(_loads_json(revised_raw)))
-        review = review_report(
-            raw_text,
-            employee_name,
-            result["current_situation"],
-            result["future_plan"],
-        )
-        review_passed = _review_passed(review)
+    for attempt in range(REPORT_MAX_ATTEMPTS):
+        if previous_report is None:
+            request = user_content
+        else:
+            request = (
+                f"{user_content}\n\n"
+                "【前回の報告書】\n"
+                f"{json.dumps(previous_report, ensure_ascii=False)}\n\n"
+                "【ファクトチェックで指摘された問題】\n"
+                f"{json.dumps(review_issues, ensure_ascii=False)}\n\n"
+                "原文だけを根拠に、全事実を漏れなく反映して報告書を修正してください。"
+            )
+        try:
+            raw = _call_ai(
+                system_prompt=SYSTEM_PROMPT,
+                user_content=request,
+                max_tokens=4500,
+                openai_model=openai_model,
+                anthropic_model=anthropic_model,
+            )
+            result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
+            review = review_report(
+                raw_text,
+                employee_name,
+                result["current_situation"],
+                result["future_plan"],
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            last_error = str(exc)
+            review_issues = ["Bao cao hoac ket qua doi chieu khong hop le"]
+            continue
 
-    if not review_passed and not allow_unverified_preview:
-        raise ValueError(
-            "Bao cao AI khong vuot qua buoc doi chieu noi dung goc; "
-            "khong ghi vao Sheet"
-        )
-    result["review_passed"] = review_passed
-    return result
+        if _review_passed(review):
+            return result
+
+        previous_report = result
+        review_issues = review.get("issues", []) if isinstance(review, dict) else []
+        last_error = "Bao cao chua vuot qua buoc doi chieu noi dung"
+
+    raise ValueError(
+        f"Bao cao AI van con loi sau {REPORT_MAX_ATTEMPTS} vong doi chieu; "
+        f"khong ghi vao Sheet. {last_error or ''}".strip()
+    )
 
 
 REVIEW_PROMPT = '''
