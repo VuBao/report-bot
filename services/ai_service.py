@@ -323,7 +323,7 @@ def _apply_term_fixes(result):
         result[key] = value
     return result
 
-def _call_openai(system_prompt, user_content, max_tokens, model):
+def _call_openai(system_prompt, user_content, max_tokens, model, temperature=0):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY chua duoc cau hinh trong .env")
@@ -336,7 +336,7 @@ def _call_openai(system_prompt, user_content, max_tokens, model):
     response = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
-        temperature=0,
+        temperature=temperature,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -345,7 +345,7 @@ def _call_openai(system_prompt, user_content, max_tokens, model):
     )
     return (response.choices[0].message.content or "").strip()
 
-def _call_anthropic(system_prompt, user_content, max_tokens, model):
+def _call_anthropic(system_prompt, user_content, max_tokens, model, temperature=0):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY chua duoc cau hinh trong .env")
@@ -358,17 +358,17 @@ def _call_anthropic(system_prompt, user_content, max_tokens, model):
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
-        temperature=0,
+        temperature=temperature,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
     return response.content[0].text.strip()
 
-def _call_ai(system_prompt, user_content, max_tokens, openai_model, anthropic_model):
+def _call_ai(system_prompt, user_content, max_tokens, openai_model, anthropic_model, temperature=0):
     provider = _select_provider()
     if provider == "openai":
-        return _call_openai(system_prompt, user_content, max_tokens, openai_model)
-    return _call_anthropic(system_prompt, user_content, max_tokens, anthropic_model)
+        return _call_openai(system_prompt, user_content, max_tokens, openai_model, temperature)
+    return _call_anthropic(system_prompt, user_content, max_tokens, anthropic_model, temperature)
 
 def _build_report_user_content(raw_text: str, employee_name: str) -> str:
     from datetime import datetime
@@ -450,6 +450,10 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
                 max_tokens=4500,
                 openai_model=openai_model,
                 anthropic_model=anthropic_model,
+                # A rejected draft must be able to take a genuinely different
+                # wording/structure path.  Each result still passes the
+                # deterministic fact-check before it can be exported.
+                temperature=0.2,
             )
             result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
             detail_issues = _detail_issues(raw_text, result)
