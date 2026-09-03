@@ -9,7 +9,8 @@ from config.sheet_config import (
     ROW_DATE, COL_CONTENT, COL_DATE,
     CHECKLIST_SPREADSHEET_ID, CHECKLIST_FIRST_DATA_ROW,
     CHECKLIST_DONE_MARK, COL_CHECKLIST_EMPLOYEE_NAME,
-    COL_CHECKLIST_MARK, COL_CHECKLIST_NOTE, COL_CHECKLIST_USER_NUMBER,
+    CHECKLIST_CIRCLE_MARK, COL_CHECKLIST_MARK, COL_CHECKLIST_NOTE,
+    COL_CHECKLIST_USER_NUMBER,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,14 +93,14 @@ def _formula_argument_separator(worksheet):
     return ";" if locale.lower().startswith("vi") else ","
 
 
-def _summary_formulas(user_range, status_range, done_mark, separator):
+def _summary_formulas(user_range, status_range, done_mark, circle_mark, separator):
     """Build locale-correct, live summary formulas for the checklist."""
     return [
         # COUNTA counts both normal digits and full-width Japanese digits such
         # as "１" that appear in the user-number column.
-        [f'="Tổng user: "&COUNTA({user_range})'],
-        [f'="Đã xử lý: "&COUNTIF({status_range}{separator}"{done_mark}")'],
-        [f'="Còn lại: "&COUNTA({user_range})-COUNTIF({status_range}{separator}"{done_mark}")'],
+        [f'="Tổng: "&COUNTA({user_range})&" user"'],
+        [f'="△: "&COUNTIF({status_range}{separator}"{done_mark}")&" user"'],
+        [f'="〇: "&COUNTIF({status_range}{separator}"{circle_mark}")&" user"'],
     ]
 
 
@@ -113,6 +114,10 @@ def _clear_stale_summary_formulas(worksheet, first_row):
     for row_number, row in enumerate(formula_rows, start=first_row):
         value = row[0] if row else ""
         if isinstance(value, str) and value.startswith((
+            '="Tổng: "&COUNT',
+            '="△: "&COUNTIF(',
+            '="〇: "&COUNTIF(',
+            # Previous formula forms are also safe to remove.
             '="Tổng user: "&COUNT',
             '="Đã xử lý: "&COUNTIF(',
             '="Còn lại: "&COUNT',
@@ -154,6 +159,7 @@ def _update_checklist_summary(worksheet, all_values):
         user_range,
         status_range,
         done_mark,
+        CHECKLIST_CIRCLE_MARK.replace('"', '""'),
         _formula_argument_separator(worksheet),
     )
     _clear_stale_summary_formulas(worksheet, last_roster_row + 1)

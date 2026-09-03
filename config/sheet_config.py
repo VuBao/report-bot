@@ -20,6 +20,9 @@ COL_CHECKLIST_NOTE = "E"
 COL_CHECKLIST_MARK = "G"
 CHECKLIST_FIRST_DATA_ROW = 3
 CHECKLIST_DONE_MARK = "△"
+# The monthly checklist's green circle dropdown is the Japanese ideographic
+# number zero (U+3007), not the similarly rendered Latin/Unicode letter O.
+CHECKLIST_CIRCLE_MARK = "〇"
 
 # Residence-card report form (per employee tab).
 FORM_COMPANY_BRANCH_CELL = "B2"
