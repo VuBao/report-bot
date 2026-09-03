@@ -425,7 +425,12 @@ def _detail_issues(raw_text: str, report: dict) -> list[str]:
 
 def generate_report(raw_text: str, employee_name: str) -> dict:
     user_content = _build_report_user_content(raw_text, employee_name)
-    openai_model = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL))
+    # Report drafting benefits from a stronger model; factual review may remain
+    # on the separately configurable review/default model.
+    openai_model = os.getenv(
+        "OPENAI_REPORT_MODEL",
+        os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL)),
+    )
     anthropic_model = os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL))
     previous_report = None
     review_issues = []
