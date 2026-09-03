@@ -234,7 +234,27 @@ def _has_merge(metadata_sheet, start_row, end_row, start_col, end_col):
         "startColumnIndex": start_col,
         "endColumnIndex": end_col,
     }
-    return expected in metadata_sheet.get("merges", [])
+    # Google returns a ``sheetId`` alongside the merge bounds.  Compare the
+    # bounds explicitly so a valid merge is not rejected because of that
+    # unrelated metadata field.
+    return any(
+        all(merge.get(key) == value for key, value in expected.items())
+        for merge in metadata_sheet.get("merges", [])
+    )
+
+
+def _value_range_values(value_range):
+    """Return cell values from gspread's dict or ValueRange response."""
+    if isinstance(value_range, dict):
+        return value_range.get("values") or []
+    return list(value_range)
+
+
+def _value_range_name(value_range):
+    """Return the A1 range from gspread's dict or ValueRange response."""
+    if isinstance(value_range, dict):
+        return value_range.get("range", "")
+    return getattr(value_range, "range", "")
 
 
 def _verify_form_layout(spreadsheet, worksheet):
@@ -256,7 +276,7 @@ def _verify_form_layout(spreadsheet, worksheet):
         raise ValueError("Cau truc merge cua form khong dung mau da duyet")
     labels = worksheet.batch_get(["A2", "A3", "A4", "A5", "E4"])
     expected = ("会社名", "特定技能", "生年月日", "現在の住所", "ビザ期限")
-    values = [" ".join((part.get("values") or [[""]])[0]) for part in labels]
+    values = [" ".join((_value_range_values(part) or [[""]])[0]) for part in labels]
     if any(label not in value for label, value in zip(expected, values)):
         raise ValueError("Nhan cua form khong dung mau da duyet")
     if worksheet.row_count < 33:
@@ -296,8 +316,8 @@ def write_residence_card_form(
     ], value_input_option="USER_ENTERED")
     read_back = worksheet.batch_get(list(values))
     for cell, expected in values.items():
-        result = next((item for item in read_back if item.get("range", "").endswith(cell)), None)
-        actual_values = (result or {}).get("values") or []
+        result = next((item for item in read_back if _value_range_name(item).endswith(cell)), None)
+        actual_values = _value_range_values(result) if result is not None else []
         actual = actual_values[0][0] if actual_values and actual_values[0] else ""
         if actual != expected:
             raise RuntimeError("Xac minh sau khi ghi that bai; vui long kiem tra form truoc khi gui lai")
