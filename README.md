@@ -112,6 +112,8 @@ Bot sẽ tự động:
 
 ### Nhập form từ thẻ ngoại kiều
 
+Chỉ bật OCR sau khi đã xác nhận Telegram bot hoạt động bình thường bằng cách đặt `RESIDENCE_CARD_ENABLED=true` trong môi trường production. Mặc định OCR tắt để test luồng bot cơ bản.
+
 Gửi **01 ảnh mặt trước thẻ**. Mặt sau là tùy chọn và có thể gửi cùng album. Bạn có thể đặt payload ở caption **hoặc** gửi nó bằng tin nhắn ngay sau ảnh (trong 5 phút). Payload phải có ba dòng đầu và nội dung báo cáo từ dòng thứ tư:
 
 ```text

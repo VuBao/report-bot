@@ -37,3 +37,5 @@ jobs:
               python3 -m pip install -r requirements.txt
             fi
             systemctl restart report-bot
+            sleep 3
+            systemctl is-active --quiet report-bot

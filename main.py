@@ -5,7 +5,7 @@ import asyncio
 import time
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from utils.parser import detect_employee_name, detect_company_name
 from utils.drive_finder import (
     find_spreadsheet_id,
@@ -32,6 +32,10 @@ PENDING_CARD_IMAGES = {}
 CARD_ALBUM_WAIT_SECONDS = 2
 CARD_CONFIRMATION_TTL_SECONDS = 15 * 60
 CARD_IMAGE_TTL_SECONDS = 5 * 60
+
+
+def _residence_card_enabled():
+    return os.getenv("RESIDENCE_CARD_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 FORMAT_HINT = (
     "Format dung:\n"
@@ -172,6 +176,11 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
 async def handle_card_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if not message or not message.photo:
+        return
+    if not _residence_card_enabled():
+        await message.reply_text(
+            "Bot dang hoat dong. Chuc nang doc anh the ngoai kieu dang tam tat de kiem tra ket noi Telegram."
+        )
         return
     if not message.media_group_id:
         if not (message.caption or "").strip():
@@ -347,11 +356,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(f"Loi khong mong muon: {e}")
 
 
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message:
+        await update.message.reply_text("Bot dang hoat dong. Ban co the gui report van ban de kiem tra.")
+
+
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN chua duoc cau hinh")
     app = ApplicationBuilder().token(token).build()
+    app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_card_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("Bot dang chay...")
