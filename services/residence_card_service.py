@@ -92,7 +92,10 @@ def _value(field):
 
 def _required_value(card, field):
     value, confidence = _value(card.get(field))
-    if not value or confidence < MIN_CONFIDENCE:
+    # An address is always displayed in the preview and requires the sender's
+    # explicit confirmation before it is stored.  Do not force a new photo
+    # merely because the vision model assigned a conservative confidence score.
+    if not value or (field != "front_address" and confidence < MIN_CONFIDENCE):
         raise ValueError(f"Khong the doc chac chan truong {field}; vui long chup lai the ro hon")
     return value
 
