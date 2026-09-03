@@ -25,22 +25,7 @@ jobs:
                 return
               fi
               touch .env
-              ENV_KEY="$key" ENV_VALUE="$value" python3 -c 'import os
-from pathlib import Path
-path = Path(".env")
-key = os.environ["ENV_KEY"]
-value = os.environ["ENV_VALUE"]
-lines = path.read_text().splitlines() if path.exists() else []
-prefix = f"{key}="
-updated = False
-for i, line in enumerate(lines):
-    if line.startswith(prefix):
-        lines[i] = prefix + value
-        updated = True
-        break
-if not updated:
-    lines.append(prefix + value)
-path.write_text("\n".join(lines) + "\n")'
+              ENV_KEY="$key" ENV_VALUE="$value" python3 -c 'import os; from pathlib import Path; path = Path(".env"); key = os.environ["ENV_KEY"]; value = os.environ["ENV_VALUE"]; lines = path.read_text().splitlines() if path.exists() else []; prefix = key + "="; index = next((i for i, line in enumerate(lines) if line.startswith(prefix)), None); lines.append(prefix + value) if index is None else lines.__setitem__(index, prefix + value); path.write_text("\n".join(lines) + "\n")'
             }
             update_env AI_PROVIDER "auto"
             update_env OPENAI_MODEL "${{ secrets.OPENAI_MODEL }}"
