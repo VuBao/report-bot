@@ -82,8 +82,13 @@ def _card_preview_text(payload, card_values, report, company_form_will_be_create
         "Chua co form cua cong ty: se tao tu COPY sau khi xac nhan.\n"
         if company_form_will_be_created else ""
     )
+    review_notice = (
+        "CAN KIEM TRA KY: bo doi chieu tu dong chua xac nhan hoan toan ban dich nay.\n\n"
+        if report.get("review_passed") is False else ""
+    )
     return (
         "Kiem tra truoc khi ghi (chi nguoi gui album moi duoc xac nhan):\n\n"
+        f"{review_notice}"
         f"Cong ty + chi nhanh: {payload['company_name']}     {payload['branch_name']}\n"
         f"Ho ten: {card_values['full_name']}\n"
         f"Ngay sinh: {card_values['date_of_birth']}\n"
@@ -165,7 +170,10 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
             find_spreadsheet_id_strict, payload["company_name"]
         )
         report = await asyncio.to_thread(
-            generate_report, payload["report_text"], card_values["full_name"]
+            generate_report,
+            payload["report_text"],
+            card_values["full_name"],
+            True,
         )
     except Exception as exc:
         logger.exception("[CARD PREPARE ERROR] %s", exc)

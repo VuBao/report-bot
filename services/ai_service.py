@@ -232,10 +232,30 @@ SYSTEM_PROMPT = """
 - 支援機関や会社による評価、保証、判断を、原文にない限り書かないこと。
 - 対象者名は冒頭の一度だけ「姓＋さん」として使用でき、以後は「本人」とする。会社名は本文に記載しないこと。
 
+【面談担当者が事前整理した入力の扱い】
+- 入力が会社名、氏名、配属店舗、その後の複数段落で構成される場合、先頭情報はメタデータとして扱い、
+  各段落は面談担当者が整理済みの重要な報告単位として扱うこと。
+- 整理済み段落を短い総評へ圧縮しないこと。各段落内の仕事、繁忙時間、疲労、気持ち、家族事情、
+  帰国実績、今後の帰国希望、健康、生活、日本語・資格学習、支援内容を一つずつ保持すること。
+- 原文の段落順を基本的に維持し、同一テーマの事実を自然につないで、読み手が面談の経緯を追える文章にすること。
+- ベトナム語の「Tôi đã động viên / Tôi đã khuyên / Tôi đã giải thích」等で始まる文の主語は
+  面談担当者・支援者である。「面談時に本人へ～と助言した／説明した」と記載し、本人自身の決定、
+  会社の確約、既に実施された将来計画へ変えてはならない。
+- 「本人が希望していること」「現在検討中のこと」「支援者が助言したこと」「実施が決定したこと」を混同しないこと。
+- 支援者の一文に複数の助言（例：勤務継続と試験準備）がある場合、そのすべてを省略せず記載すること。
+- 「忙しい」は客数・業務量、「大変・vất vả」は本人が感じる負担を表すため、両方が原文にある場合は区別すること。
+- 「thi/chứng chỉ 特定技能2号」は「特定技能2号への移行に向けた試験」と表現し、特定技能2号自体を
+  証明書・試験名として扱わないこと。
+- 「thường xuyên gọi anh ấy về phụ giúp」は、家族が本人へ頻繁に連絡し、帰国して手伝うよう求めているという意味である。
+- 「đang học để chuẩn bị thi」は、現在、受験準備として学習しているという進行中の事実である。
+- 「Sau khi ... có thể ... khi đó ... có thể ...」は条件付きの可能性であるため、条件と二つの可能性をすべて保持すること。
+
 【分類】
 - current_situation：現在または既に発生した仕事、日本語、生活、家族、健康、待遇、在留状況、課題。
 - future_plan：今後の希望、予定、目標、受験、帰国、転職、退職、家族計画。
 - 同じ事実を両方へ重複させないこと。
+- 将来について述べる段落内にあっても、現在の家族状況、現在の感情、過去の帰国実績、現在進行中の学習は
+  current_situation に記載すること。将来の帰国予定、受験目標、支援者の今後に向けた助言は future_plan に記載すること。
 
 【用語】
 - Tokutei Ginou số 1 / GINO1 / 特定技能1 は「特定技能1号」とする。
@@ -373,7 +393,7 @@ def _review_passed(review):
     )
 
 
-def generate_report(raw_text: str, employee_name: str) -> dict:
+def generate_report(raw_text: str, employee_name: str, allow_unverified_preview=False) -> dict:
     user_content = _build_report_user_content(raw_text, employee_name)
     openai_model = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL))
     anthropic_model = os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL))
@@ -392,7 +412,8 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
         result["current_situation"],
         result["future_plan"],
     )
-    if not _review_passed(review):
+    review_passed = _review_passed(review)
+    if not review_passed:
         revision_request = (
             f"{user_content}\n\n"
             "【前回の報告書】\n"
@@ -415,12 +436,14 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
             result["current_situation"],
             result["future_plan"],
         )
+        review_passed = _review_passed(review)
 
-    if not _review_passed(review):
+    if not review_passed and not allow_unverified_preview:
         raise ValueError(
             "Bao cao AI khong vuot qua buoc doi chieu noi dung goc; "
             "khong ghi vao Sheet"
         )
+    result["review_passed"] = review_passed
     return result
 
 
@@ -438,6 +461,10 @@ REVIEW_PROMPT = '''
 7. 原文の曖昧な箇所を推測して断定している。
 8. 原文の独立した事実を「順調」「問題なし」等へまとめ、具体的な情報を落としている。
 9. 本人の感想を客観的な評価へ変えている。
+10. 面談担当者・支援者の助言や説明を、本人の決定または会社の確約へ変えている。
+11. 現在・過去の事実を future_plan に入れる、または将来の希望・予定を current_situation に入れている。
+12. 支援者が述べた複数の助言、条件、可能性の一部を省略している。
+13. 「vất vả」を単なる「忙しい」へ弱める、または特定技能2号を証明書・試験名として扱っている。
 
 次は不一致ではなく、必ず許容してください：
 - 意味が同じ自然な日本語への翻訳、同義表現、敬語、文法上必要な接続。
@@ -452,6 +479,12 @@ REVIEW_PROMPT = '''
   「cảm thấy thoải mái và hài lòng với công việc hiện tại」→「現在の仕事に安心感と満足感を持っている」
   「gần đây chưa có dự định về Việt Nam」→「当面ベトナムへ帰国する予定はない」
   「mọi thứ tiến triển tốt / không có điều gì lo lắng」→「全体として順調で、心配事はない」
+- 「thường xuyên gọi anh ấy về phụ giúp」→「家族から頻繁に連絡があり、帰国して手伝うよう求められている」
+- 「đang học để chuẩn bị thi」→「受験準備として現在学習している」
+- 「Sau khi chuyển được ... có thể đón vợ con ... khi đó ... có thể ổn định hơn」→
+  「移行できた場合は妻子を呼び寄せることが可能となり、生活・精神面が安定する可能性がある」
+- 「Tôi đã động viên / khuyên / giải thích」の主語は面談担当者・支援者であり、本人ではない。
+  報告書でも「面談時に本人へ助言・説明した」と保持されているか確認すること。
 
 単なる言い回しの違い、「一致していない可能性がある」という疑いだけでは不合格にしないでください。
 passed=false にする場合、各 issue には追加・欠落・変化した具体的な事実を明記してください。
