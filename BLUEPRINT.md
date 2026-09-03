@@ -68,7 +68,7 @@ Bot vẫn dùng Drive folder `18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC`. Tên chi nhán
 3. Ngày sinh và hạn visa phải khớp định dạng ngày hợp lệ. Hạn visa chỉ lấy từ nhãn `在留期間満了日`; nếu chỉ đọc được `このカードは…まで有効` thì bot dừng và yêu cầu ảnh rõ hơn.
 4. Nếu mặt sau có mục `住居地記載欄` đã điền, bot chỉ sử dụng mục có ngày ghi nhận mới nhất khi đọc rõ cả ngày và địa chỉ. Nếu không thể xác định thứ tự/một ký tự, bot dừng — không chọn đại một địa chỉ.
 5. Họ tên dòng 2 và họ tên trên thẻ phải giống nhau sau khi chuẩn hóa khoảng trắng, full-width/half-width và chữ hoa. Không khớp → không ghi. Tên tab ứng viên cũng phải khớp duy nhất theo quy tắc này; không fuzzy-match để tự chọn tab.
-6. Nếu chưa có workbook của công ty, bot copy workbook `COPY` sau `XAC NHAN`. Trong workbook đó, nếu chưa có tab ứng viên thì bot chỉ được tạo tab từ đúng template `MALE`/`FEMALE` sau khi giới tính trên thẻ đọc rõ. Không rõ giới tính hoặc không có template → không ghi.
+6. Nếu chưa có workbook của công ty, bot copy workbook `COPY` sau `XAC NHAN`. Trong workbook đó, nếu chưa có tab ứng viên thì bot tạo tab từ đúng template `FORMAT`. Giới tính không được đọc, kiểm tra hoặc lưu.
 7. Các ô đích cố định phải còn đúng cấu trúc form (bao gồm merge range); nếu template khác cấu trúc trong ảnh, bot dừng thay vì đổi số hàng/cột theo suy đoán.
 8. Trước khi ghi, bot gửi bản xem trước 5 trường form, chi nhánh và trạng thái "báo cáo sẽ được dịch vào B31/B33", rồi yêu cầu người gửi trả lời `XAC NHAN`. Chỉ sau xác nhận mới ghi.
 9. Khi ghi dùng một batch update nguyên tử; sau đó đọc lại toàn bộ ô đã ghi và chỉ báo hoàn tất khi giá trị đọc lại khớp dữ liệu đã xác nhận. Lỗi giữa chừng phải báo lỗi, không đánh dấu checklist/report là hoàn tất.
@@ -95,7 +95,7 @@ Trước khi bật cho dữ liệu production, cần chạy chế độ **dry-ru
 
 - Mở rộng Telegram handler để nhận một `PHOTO` mặt trước hoặc album tối đa hai ảnh; caption phải đi kèm ảnh/album.
 - Tạo `services/residence_card_service.py`: tải ảnh Telegram vào bộ nhớ tạm, gọi model hỗ trợ vision với prompt JSON schema, kiểm tra dữ liệu và xóa file tạm ở cả nhánh thành công/lỗi.
-- Tạo `services/employee_form_service.py`: xác định/tạo tab ứng viên từ template giới tính, kiểm tra cấu trúc form, tạo preview, batch-update `B2/B3/B4/B5/E5/B31/B33` và read-back verification.
+- Tạo `services/residence_card_service.py`: xác định/tạo tab ứng viên từ template `FORMAT`, kiểm tra cấu trúc form, tạo preview, batch-update `B2/B3/B4/B5/E5/B31/B33` và read-back verification.
 - Tạo trạng thái tác vụ tạm theo `chat_id` + `message_id`, tự hết hạn sau 15 phút nếu không nhận `XAC NHAN`; không lưu ảnh hoặc dữ liệu trích xuất lâu hơn phiên này.
 - Thêm audit tối thiểu không chứa PII: thời điểm, `chat_id`, ID file, tab đã chọn, kết quả `preview/confirmed/failed`, mã lỗi. Không log ảnh, OCR raw response, số thẻ hay các giá trị năm trường.
 - Tách hẳn command mới khỏi `handle_message` tạo báo cáo hiện tại để ảnh thẻ không bị gửi nhầm vào prompt báo cáo định kỳ, nhưng tái sử dụng `generate_report` cho phần nội dung từ dòng 4 trở đi.

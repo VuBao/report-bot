@@ -16,10 +16,9 @@ from config.sheet_config import (
     FORM_COMPANY_BRANCH_CELL,
     FORM_CURRENT_REPORT_CELL,
     FORM_DOB_CELL,
-    FORM_FEMALE_TEMPLATE,
     FORM_FUTURE_REPORT_CELL,
-    FORM_MALE_TEMPLATE,
     FORM_NAME_CELL,
+    FORM_TEMPLATE,
     FORM_VISA_EXPIRY_CELL,
 )
 
@@ -48,8 +47,7 @@ Required schema:
   "back_address_entries": [
     {"reported_date": "YYYY年MM月DD日" | "", "address": string, "confidence": number}
   ],
-  "visa_expiry": {"value": "YYYY年MM月DD日" | "", "confidence": number},
-  "gender": {"value": "male" | "female" | "unknown", "confidence": number}
+  "visa_expiry": {"value": "YYYY年MM月DD日" | "", "confidence": number}
 }
 
 Rules: full_name comes only from 氏名/NAME. date_of_birth comes only from 生年月日/DATE OF BIRTH.
@@ -147,19 +145,11 @@ def validate_card(card, submitted_name):
     if valid_back_entries:
         address = max(valid_back_entries, key=lambda entry: entry[0])[1]
 
-    gender, gender_confidence = _value(card.get("gender"))
-    gender = gender.lower()
-    # Gender is used only when a new tab has to be made from a MALE/FEMALE
-    # template; it is never stored or returned to Telegram.
-    if gender not in {"male", "female"} or gender_confidence < MIN_CONFIDENCE:
-        gender = None
-
     return {
         "full_name": full_name,
         "date_of_birth": dob,
         "address": address,
         "visa_expiry": visa_expiry,
-        "gender": gender,
     }
 
 
@@ -209,10 +199,8 @@ def _find_worksheet_exact(spreadsheet, employee_name):
     return matches[0] if matches else None
 
 
-def _duplicate_template(spreadsheet, employee_name, gender):
-    if gender not in {"male", "female"}:
-        raise ValueError("Khong the xac dinh chac chan gioi tinh de tao tab moi tu template")
-    template_name = FORM_MALE_TEMPLATE if gender == "male" else FORM_FEMALE_TEMPLATE
+def _duplicate_template(spreadsheet, employee_name):
+    template_name = FORM_TEMPLATE
     template = next(
         (ws for ws in spreadsheet.worksheets() if ws.title.strip().upper() == template_name), None
     )
@@ -298,7 +286,7 @@ def write_residence_card_form(
     worksheet = _find_worksheet_exact(spreadsheet, employee_name)
     created = worksheet is None
     if created:
-        worksheet = _duplicate_template(spreadsheet, employee_name, card_values["gender"])
+        worksheet = _duplicate_template(spreadsheet, employee_name)
     _verify_form_layout(spreadsheet, worksheet)
 
     values = {
