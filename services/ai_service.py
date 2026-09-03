@@ -7,7 +7,7 @@ DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 MODEL = DEFAULT_ANTHROPIC_MODEL
 
-SYSTEM_PROMPT = """
+LEGACY_SYSTEM_PROMPT = """
 あなたは特定技能外国人の定期面談内容をまとめ、入国在留管理庁への報告書を作成する担当者です。
 ベトナム語の面談メモを、自然で客観的な日本語の報告書に変換してください。
 
@@ -195,6 +195,44 @@ Về sức khỏe, hiện anh có tình trạng sức khỏe tốt, không mắc
 
 """
 
+SYSTEM_PROMPT = """
+あなたは、特定技能外国人との定期面談記録を、出入国在留管理庁（入管）への報告に適した
+自然で端正なビジネス日本語へ翻訳・整理する担当者です。
+
+【最優先原則：内容の正確性】
+- 原文に明記された事実だけを使用すること。自然な文章にするためでも、事実・評価・背景・理由を追加しないこと。
+- 原文の全情報を漏れなく反映し、意味、主語、対象者、時制、否定、程度、因果関係を変えないこと。
+- 日付、期間、回数、金額、人数、日本語レベル、試験、資格、在留資格、帰国・退職・転職予定を一文字ずつ慎重に扱うこと。
+- 「未定」「検討中」「希望」「予定」「可能性」「決定済み」を明確に区別し、確度を強めたり弱めたりしないこと。
+- 問題が書かれていないだけで「問題なし」「生活が安定」「職場関係が良好」等を追加しないこと。
+- 入力が短い場合は出力も短くすること。文字数を増やす目的の言い換え、説明、一般論は禁止する。
+- 読み取れない、矛盾する、意味が曖昧な箇所を推測で補わないこと。
+
+【文体】
+- 入管向けの面談報告として、丁寧、客観的、簡潔かつ自然なビジネス日本語を用いること。
+- 機械翻訳調や箇条書き調を避け、事実関係を変えない範囲で接続を整えること。
+- 本人の申告は「本人は～と述べています」「～とのことです」「～を希望しています」等で客観的に表すこと。
+- 支援機関や会社による評価、保証、判断を、原文にない限り書かないこと。
+- 対象者名は冒頭の一度だけ「姓＋さん」として使用でき、以後は「本人」とする。会社名は本文に記載しないこと。
+
+【分類】
+- current_situation：現在または既に発生した仕事、日本語、生活、家族、健康、待遇、在留状況、課題。
+- future_plan：今後の希望、予定、目標、受験、帰国、転職、退職、家族計画。
+- 同じ事実を両方へ重複させないこと。
+
+【用語】
+- Tokutei Ginou số 1 / GINO1 / 特定技能1 は「特定技能1号」とする。
+- Tokutei Ginou số 2 / GINO2 / 特定技能2 は「特定技能2号」とする。
+- 特定技能1号・特定技能2号・技能実習・技能検定を絶対に混同しないこと。
+- 飲食業務は文脈に応じて、接客、オーダー対応、配膳、下膳、仕込み、調理業務、盛り付け、
+  衛生管理、在庫管理、発注業務等の自然な業界用語を用いること。ただし原文にない業務を追加しないこと。
+
+【出力】
+- JSONのみを返し、キーは current_situation と future_plan の二つだけにすること。
+- 各値は改行のない一つの段落とすること。該当情報がないセクションは空文字列にすること。
+- Markdown、注釈、説明文を付けないこと。
+"""
+
 def _select_provider():
     provider = os.getenv("AI_PROVIDER", "auto").strip().lower()
     if provider in ("openai", "anthropic"):
@@ -228,18 +266,12 @@ def _apply_term_fixes(result):
     for key, value in list(result.items()):
         if not isinstance(value, str):
             continue
-        value = re.sub(r'（GINO[^）]*）', '', value)
-        value = re.sub(r'\(GINO[^\)]*\)', '', value)
         value = re.sub(r'Tokutei\s*Ginou\s*(?:số\s*)?1', '特定技能1号', value, flags=re.IGNORECASE)
         value = re.sub(r'Tokutei\s*Ginou\s*(?:số\s*)?2', '特定技能2号', value, flags=re.IGNORECASE)
         value = re.sub(r'特定技能\s*1(?!号)', '特定技能1号', value)
         value = re.sub(r'特定技能\s*2(?!号)', '特定技能2号', value)
-        value = re.sub(r'GINO\d[級号]?', '特定技能2号', value)
-        value = re.sub(r'特定技能2号[級等]', '特定技能2号', value)
-        value = re.sub(r'特定技能2号試験[^のをにはがもで。、\s　]*', '特定技能2号試験', value)
-        value = re.sub(r'技能検定試験.{0,20}?GINO\d.{0,5}?', '特定技能2号試験', value)
-        value = re.sub(r'GINO\d[級号]?試験', '特定技能2号試験', value)
-        value = re.sub(r'技能検定試験\d*[級号]?', '特定技能2号試験', value)
+        value = re.sub(r'GINO\s*1(?:号)?', '特定技能1号', value, flags=re.IGNORECASE)
+        value = re.sub(r'GINO\s*2(?:号)?', '特定技能2号', value, flags=re.IGNORECASE)
         result[key] = value
     return result
 
@@ -256,7 +288,7 @@ def _call_openai(system_prompt, user_content, max_tokens, model):
     response = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
-        temperature=0.2,
+        temperature=0,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -278,6 +310,7 @@ def _call_anthropic(system_prompt, user_content, max_tokens, model):
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
+        temperature=0,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
@@ -312,33 +345,52 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
     )
     result = _loads_json(raw)
     result = _apply_term_fixes(result)
-    if "current_situation" not in result or "future_plan" not in result:
-        raise ValueError(f"AI tra ve thieu key: {list(result.keys())}")
+    expected_keys = {"current_situation", "future_plan"}
+    if not isinstance(result, dict) or set(result) != expected_keys:
+        raise ValueError("AI tra ve sai cau truc bao cao")
+    if not all(isinstance(result[key], str) for key in expected_keys):
+        raise ValueError("AI tra ve noi dung bao cao khong hop le")
+
+    review = review_report(
+        raw_text,
+        employee_name,
+        result["current_situation"],
+        result["future_plan"],
+    )
+    review_is_valid = (
+        isinstance(review, dict)
+        and set(review) == {"passed", "issues", "summary"}
+        and isinstance(review.get("passed"), bool)
+        and isinstance(review.get("issues"), list)
+        and isinstance(review.get("summary"), str)
+    )
+    if not review_is_valid or review["passed"] is not True or review["issues"]:
+        raise ValueError(
+            "Bao cao AI khong vuot qua buoc doi chieu noi dung goc; "
+            "khong ghi vao Sheet"
+        )
     return result
 
 
 REVIEW_PROMPT = '''
-あなたは特定技能支援報告書の品質管理担当者です。
-以下の【元の入力】と【AIが作成した報告書】を比較し、3つの観点で審査してください。
+あなたは、出入国在留管理庁向け面談報告の厳格なファクトチェッカーです。
+原文と作成済み報告書を、文体ではなく内容の一致について一文ずつ照合してください。
 
-【審査基準】— 重大な問題のみフラグを立てること
-1. 重要情報の欠落: 帰国予定・資格取得・結婚・転勤など重要な事実が完全に欠落している場合のみ
-2. 重大な誤訳・矛盾: 意味が完全に逆転している、または全く異なる内容になっている場合のみ
-3. 重大な用語ミス: 特定技能1号/2号・技能実習の混同など、在留資格の誤記のみ
-4. 文字・表記の誤り: 余分な文字（例：試験級）、試験2級）など）、文字化け、明らかな誤字脱字がある場合
+次のいずれかが一つでもあれば passed=false とすること：
+1. 原文にない事実、評価、理由、因果関係、背景、予定、希望、「問題なし」等を追加している。
+2. 原文の事実を一つでも欠落、弱化、強化、一般化している。
+3. 主語、人物、時制、否定、確度（未定・検討・希望・予定・決定）を変えている。
+4. 日付、期間、回数、金額、人数、資格、日本語レベル、在留資格、帰国・退職・転職の内容が不一致である。
+5. 現在の事実と将来の希望・予定を取り違えている。
+6. 特定技能1号、特定技能2号、技能実習、技能検定を混同している。
+7. 原文の曖昧な箇所を推測して断定している。
 
-【フラグを立てない項目】
-- 文書構成・項目配置の問題
-- AIが文脈から推測した年次・日付の補完
-- 表現の丁寧さや細かいニュアンスの差異
-- 情報の配置順序
+許容する変更は、意味を一切変えない自然な日本語への翻訳、文法上必要な接続、
+対象者名を冒頭の「姓＋さん」以外では「本人」とすること、および会社名を本文から除くことだけです。
+文章が流暢でも、内容に少しでも不一致があれば必ず不合格にしてください。
 
-【出力ルール】
-- JSON形式のみ出力すること
-- キーは "passed" (bool), "issues" (list of str), "summary" (str) の3つのみ
-- passedがtrueの場合、issuesは空リスト
-- summaryは1〜2文で全体評価を述べること
-- マークダウン記号は使わないこと
+JSONのみを返してください。キーは passed (bool), issues (list of str), summary (str) の三つだけです。
+passed=true の場合は issues を空配列にしてください。Markdownや説明文を付けないでください。
 '''
 
 def review_report(raw_text: str, employee_name: str, current_situation: str, future_plan: str) -> dict:
