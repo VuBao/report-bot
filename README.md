@@ -47,12 +47,14 @@ TELEGRAM_BOT_TOKEN=xxx
 AI_PROVIDER=auto
 OPENAI_API_KEY=sk-xxx
 OPENAI_MODEL=gpt-4o
+OPENAI_VISION_MODEL=gpt-4o
 # Optional fallback only:
 # ANTHROPIC_API_KEY=sk-ant-xxx
 # ANTHROPIC_MODEL=claude-haiku-4-5
 GOOGLE_SERVICE_ACCOUNT_JSON=./config/service_account.json
 GOOGLE_DRIVE_FOLDER_ID=18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC
-SHEET_CHECKLIST_ID=1ldjiNnLFE18FNW8k6-n5ARsXY28fBu3ejzX9jxnJN4c
+# Mặc định là Sheet danh sách tháng 9–10/2026 mới. Chỉ khai báo khi cần đổi đích:
+# CHECKLIST_SPREADSHEET_ID_OVERRIDE=1WszmJ-IwtbwzzkTQ0N7SeEtyPllQRKOX_H3JYdEG4ao
 SHEET_RAMURA_ID=1Fc4HnFvL5TyMPxblJT19mCth5ppb4tyn
 SHEET_BICHO_ID=1NjHNeUI7XQ_hjlZdv61kCz_MDyt_3Zdv
 SHEET_TAKIKO_ID=1-9gjxRudRUyau1NBZ3Awlodo-JRrr7aa
@@ -102,7 +104,31 @@ Bot sẽ tự động:
 4. Cập nhật ngày vào E2
 5. Tô màu xanh nhạt các ô đã xử lý
 6. Đổi màu tab
-7. Đánh dấu CHECK LIST cột E
+7. Đánh dấu CHECK LIST tại cột G (`△`). Sheet checklist mặc định là
+   `1WszmJ-IwtbwzzkTQ0N7SeEtyPllQRKOX_H3JYdEG4ao`, theo format: B công ty,
+   C số user, D tên, E ghi chú, F khu vực, G trạng thái.
+8. Cập nhật tổng hợp dưới cột G: tổng user (đếm từ cột C), đã xử lý và còn lại.
+   Hai số sau tự đổi khi trạng thái `△` tại cột G được thêm, xóa hoặc chỉnh sửa.
+
+### Nhập form từ thẻ ngoại kiều
+
+Gửi **01 ảnh mặt trước thẻ** kèm caption. Mặt sau là tùy chọn và có thể gửi cùng album. Caption phải có ba dòng đầu và nội dung báo cáo từ dòng thứ tư:
+
+```text
+株式会社アスラポート
+NGUYEN DINH QUOC KHANH
+藤平ラ−メン大阪店
+
+[nội dung báo cáo]
+```
+
+Bot đọc các trường cần thiết trên thẻ, đối chiếu họ tên với dòng hai, rồi gửi preview. Chỉ sau tin nhắn `XAC NHAN` từ chính người gửi ảnh, bot mới ghi form: `B2`, `B3`, `B4`, `B5`, `E5`, và báo cáo dịch tại `B31`, `B33`. Nếu chưa có file của công ty, bot copy file `COPY` vào Drive folder để tạo form mới. Gửi `HUY` để bỏ yêu cầu. Ảnh thẻ không được lưu sau khi đọc.
+
+Để tạo form mới được, service account phải có quyền **Editor** cho cả Drive folder đích và file `COPY`.
+
+### Test local không ghi Sheet
+
+Chạy `python3 local_test_server.py`, sau đó mở `http://127.0.0.1:8080`. Trang test nhận ảnh mặt trước (và mặt sau tùy chọn), chạy OCR + dịch + validation, rồi hiển thị chính xác các giá trị sẽ điền vào `B2`, `B3`, `B4`, `B5`, `E5`, `B31`, `B33`. Chế độ này không gọi API Google Sheets và không ghi dữ liệu production.
 
 ---
 

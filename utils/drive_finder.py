@@ -2,9 +2,12 @@
 import difflib
 import os, logging, re
 from google.oauth2.service_account import Credentials
+from config.sheet_config import COPY_TEMPLATE_SPREADSHEET_ID
 
 logger = logging.getLogger(__name__)
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly","https://www.googleapis.com/auth/spreadsheets"]
+# Drive write permission is needed only when a missing company workbook is
+# created by copying the approved COPY template.
+SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
 DEFAULT_FOLDER_ID = "18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC"
 _cache = {}
 _files_cache = None
@@ -91,6 +94,38 @@ def find_spreadsheet_id(company_name):
         return (best_match["id"],best_match["name"])
     logger.warning(f"[DRIVE] Khong tim thay '{company_name}'")
     return (None,None)
+
+
+def find_spreadsheet_id_strict(company_name):
+    """Find exactly one company workbook; never use fuzzy matching for ID-card data."""
+    key = _normalize(company_name)
+    matches = [file for file in _get_all_files() if _normalize(file["name"]) == key]
+    if len(matches) == 1:
+        file = matches[0]
+        logger.info("[DRIVE STRICT] Found one exact company workbook")
+        return file["id"], file["name"]
+    if not matches:
+        logger.warning("[DRIVE STRICT] No exact workbook for company")
+        return None, None
+    raise ValueError("Co nhieu file Google Sheet trung ten cong ty; khong the chon an toan")
+
+
+def find_or_create_company_spreadsheet(company_name):
+    """Return the exact company workbook, copying COPY into the Drive folder if absent."""
+    spreadsheet_id, file_name = find_spreadsheet_id_strict(company_name)
+    if spreadsheet_id:
+        return spreadsheet_id, file_name, False
+
+    service = _get_drive_service()
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", DEFAULT_FOLDER_ID)
+    copied = service.files().copy(
+        fileId=COPY_TEMPLATE_SPREADSHEET_ID,
+        body={"name": company_name, "parents": [folder_id]},
+        fields="id,name",
+    ).execute()
+    clear_cache()
+    logger.info("[DRIVE COPY] Created company workbook from COPY template")
+    return copied["id"], copied["name"], True
 
 def clear_cache():
     global _files_cache

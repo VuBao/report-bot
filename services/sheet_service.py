@@ -6,7 +6,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from config.sheet_config import (
     COLOR_CELL_DONE, COLOR_TAB_DONE,
-    ROW_DATE, COL_CONTENT, COL_DATE, COL_CHECKLIST_MARK,
+    ROW_DATE, COL_CONTENT, COL_DATE,
+    CHECKLIST_SPREADSHEET_ID, CHECKLIST_FIRST_DATA_ROW,
+    CHECKLIST_DONE_MARK, COL_CHECKLIST_EMPLOYEE_NAME,
+    COL_CHECKLIST_MARK, COL_CHECKLIST_NOTE, COL_CHECKLIST_USER_NUMBER,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,7 +34,11 @@ def _today_japanese():
     return f"作成日：{now.year}年{now.month:02d}月{now.day:02d}日"
 
 def _col_letter_to_index(col):
-    return ord(col.upper()) - ord("A") + 1
+    """Convert an A1 column letter (including multi-letter columns) to an index."""
+    result = 0
+    for char in col.upper():
+        result = result * 26 + ord(char) - ord("A") + 1
+    return result
 
 def _apply_background(worksheet, row, col, color):
     try:
@@ -53,6 +60,64 @@ def _find_row_by_label(all_values, label):
         if row and label in row[0]:
             return i + 1
     return None
+
+
+def _normalise_name(value):
+    return " ".join(value.strip().upper().split())
+
+
+def _find_checklist_employee_row(all_values, employee_name):
+    """Find an employee by name in column D of the monthly checklist."""
+    name_index = _col_letter_to_index(COL_CHECKLIST_EMPLOYEE_NAME) - 1
+    expected_name = _normalise_name(employee_name)
+
+    for row_number, row in enumerate(all_values, start=1):
+        if len(row) <= name_index:
+            continue
+        listed_name = _normalise_name(row[name_index])
+        if listed_name and (expected_name in listed_name or listed_name in expected_name):
+            return row_number
+    return None
+
+
+def _update_checklist_summary(worksheet, all_values):
+    """Keep live totals below column G, driven by the checklist status in G.
+
+    The formula range ends at the last roster row, so the summary cells themselves
+    are never included in the totals.  Clearing or changing a status in G therefore
+    updates the completed and remaining counts automatically.
+    """
+    number_index = _col_letter_to_index(COL_CHECKLIST_USER_NUMBER) - 1
+    name_index = _col_letter_to_index(COL_CHECKLIST_EMPLOYEE_NAME) - 1
+    roster_rows = [
+        row_number
+        for row_number, row in enumerate(all_values, start=1)
+        if row_number >= CHECKLIST_FIRST_DATA_ROW
+        and len(row) > number_index
+        and row[number_index].strip()
+        and len(row) > name_index
+        and row[name_index].strip()
+    ]
+    if not roster_rows:
+        logger.warning("[CHECKLIST] Khong co dong user de cap nhat tong hop")
+        return
+
+    last_roster_row = max(roster_rows)
+    summary_row = last_roster_row + 2
+    status_range = f"{COL_CHECKLIST_MARK}{CHECKLIST_FIRST_DATA_ROW}:{COL_CHECKLIST_MARK}{last_roster_row}"
+    user_range = f"{COL_CHECKLIST_USER_NUMBER}{CHECKLIST_FIRST_DATA_ROW}:{COL_CHECKLIST_USER_NUMBER}{last_roster_row}"
+    done_mark = CHECKLIST_DONE_MARK.replace('"', '""')
+    formulas = [
+        [f'="Tổng user: "&COUNT({user_range})'],
+        [f'="Đã xử lý: "&COUNTIF({status_range},"{done_mark}")'],
+        [f'="Còn lại: "&COUNT({user_range})-COUNTIF({status_range},"{done_mark}")'],
+    ]
+    worksheet.update(
+        f"{COL_CHECKLIST_MARK}{summary_row}:{COL_CHECKLIST_MARK}{summary_row + 2}",
+        formulas,
+        value_input_option="USER_ENTERED",
+    )
+    logger.info("[CHECKLIST] Cap nhat tong hop tai cot %s, tu row %s", COL_CHECKLIST_MARK, summary_row)
 
 def process_employee_sheet(spreadsheet_id, tab_name, row_future, current_situation, future_plan):
     gc = _get_client()
@@ -117,7 +182,9 @@ def process_employee_sheet(spreadsheet_id, tab_name, row_future, current_situati
 
 def mark_checklist(employee_name, company_key):
     gc = _get_client()
-    checklist_id = os.getenv("SHEET_CHECKLIST_ID")
+    # A legacy SHEET_CHECKLIST_ID may still point to the old roster.  Only an
+    # explicit new override is allowed to change the configured destination.
+    checklist_id = os.getenv("CHECKLIST_SPREADSHEET_ID_OVERRIDE", CHECKLIST_SPREADSHEET_ID)
     tab_name = os.getenv("CHECKLIST_TAB_NAME", "CHECK LIST")
 
     spreadsheet = gc.open_by_key(checklist_id)
@@ -127,21 +194,18 @@ def mark_checklist(employee_name, company_key):
         return False
 
     all_values = worksheet.get_all_values()
-    col_c_idx = 2
-    col_e_idx = 4
-
-    for i, row in enumerate(all_values):
-        if len(row) > col_c_idx:
-            cell_name = row[col_c_idx].strip().upper()
-            emp = ' '.join(employee_name.strip().upper().split())
-            cell_clean = ' '.join(cell_name.split())
-            if cell_clean and (emp in cell_clean or cell_clean in emp):
-                row_number = i + 1
-                worksheet.update_cell(row_number, col_e_idx + 1, "△")
-                _apply_background(worksheet, row_number, COL_CHECKLIST_MARK, COLOR_CELL_DONE)
-                logger.info(f"[CHECKLIST] Check row {row_number} cho {employee_name}")
-                # Count duoc xu ly boi GAS onEdit trigger
-                return True
+    row_number = _find_checklist_employee_row(all_values, employee_name)
+    if row_number:
+        worksheet.update_cell(
+            row_number,
+            _col_letter_to_index(COL_CHECKLIST_MARK),
+            CHECKLIST_DONE_MARK,
+        )
+        _apply_background(worksheet, row_number, COL_CHECKLIST_MARK, COLOR_CELL_DONE)
+        # Reload so that a manually appended roster row is included in the totals.
+        _update_checklist_summary(worksheet, worksheet.get_all_values())
+        logger.info(f"[CHECKLIST] Check row {row_number} cho {employee_name}")
+        return True
 
     logger.warning(f"[CHECKLIST] Khong tim thay {employee_name}")
     return False
@@ -193,7 +257,7 @@ def duplicate_last_sheet(spreadsheet_id, new_tab_name):
 
 def add_checklist_note(employee_name, company_name, note):
     gc = _get_client()
-    checklist_id = os.getenv("SHEET_CHECKLIST_ID")
+    checklist_id = os.getenv("CHECKLIST_SPREADSHEET_ID_OVERRIDE", CHECKLIST_SPREADSHEET_ID)
     tab_name = os.getenv("CHECKLIST_TAB_NAME", "CHECK LIST")
     spreadsheet = gc.open_by_key(checklist_id)
     worksheet = _find_worksheet(spreadsheet, tab_name)
@@ -201,16 +265,10 @@ def add_checklist_note(employee_name, company_name, note):
         logger.error(f"[CHECKLIST NOTE] Tab khong tim thay")
         return False
     all_values = worksheet.get_all_values()
-    col_c_idx = 2
-    col_f_idx = 5
-    for i, row in enumerate(all_values):
-        if len(row) > col_c_idx:
-            cell_name = row[col_c_idx].strip().upper()
-            emp = ' '.join(employee_name.strip().upper().split())
-            cell_clean = ' '.join(cell_name.split())
-            if cell_clean and (emp in cell_clean or cell_clean in emp):
-                worksheet.update_cell(i + 1, col_f_idx + 1, note)
-                logger.info(f"[CHECKLIST NOTE] Row {i+1}: {note}")
-                return True
+    row_number = _find_checklist_employee_row(all_values, employee_name)
+    if row_number:
+        worksheet.update_cell(row_number, _col_letter_to_index(COL_CHECKLIST_NOTE), note)
+        logger.info(f"[CHECKLIST NOTE] Row {row_number}: {note}")
+        return True
     logger.warning(f"[CHECKLIST NOTE] Khong tim thay {employee_name}")
     return False
