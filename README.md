@@ -124,7 +124,7 @@ NGUYEN DINH QUOC KHANH
 [nội dung báo cáo]
 ```
 
-Bot đọc các trường cần thiết trên thẻ, đối chiếu họ tên với dòng hai, rồi gửi preview. Chỉ sau tin nhắn `XAC NHAN` từ chính người gửi ảnh, bot mới ghi form: `B2`, ngày tạo tại `E2`, `B3`, `B4`, `B5`, `E5`, và báo cáo dịch tại `B31`, `B33`. Toàn bộ vùng vừa ghi được tô màu hoàn tất và tab user được đổi màu theo rule cũ. Nếu chưa có file của công ty, bot copy file `COPY` vào Drive folder để tạo form mới. Gửi `HUY` để bỏ yêu cầu. Ảnh thẻ không được lưu sau khi đọc.
+Bot đọc các trường cần thiết trên thẻ, đối chiếu họ tên với dòng hai, rồi gửi preview. Chỉ sau tin nhắn `XAC NHAN` từ chính người gửi ảnh, bot mới ghi form: `B2`, ngày tạo tại `E2`, `B3`, `B4`, `B5`, `E5`, và báo cáo dịch tại `B31`, `B33`. Chỉ vùng ngày sửa `E2:F2` và hai vùng báo cáo `B31:F31`, `B33:F33` được tô màu hoàn tất; các trường thẻ và màu tab giữ nguyên format của template. Nếu chưa có file của công ty, bot copy file `COPY` vào Drive folder để tạo form mới. Gửi `HUY` để bỏ yêu cầu. Ảnh thẻ không được lưu sau khi đọc.
 
 Để tạo form mới được, service account phải có quyền **Editor** cho cả Drive folder đích và file `COPY`.
 

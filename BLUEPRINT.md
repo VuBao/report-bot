@@ -89,7 +89,7 @@ Theo form trong ảnh, các ô giá trị (hoặc ô đầu của vùng merge) l
 | Báo cáo — mục tiêu tương lai | `B33` | Nội dung Nhật đã dịch hoàn chỉnh |
 
 `B31` và `B33` thay thế việc dò label/hàng tương lai khác nhau trong luồng cũ cho feature này. Các hàng báo cáo chỉ được ghi sau khi dữ liệu đầu vào và kết quả dịch đã qua kiểm tra.
-Tất cả vùng được bot ghi (`B2:D2`, `E2:F2`, `B3:C3`, `B4`, `B5:D5`, `E5:F5`, `B31:F31`, `B33:F33`) phải được tô màu hoàn tất; tab user cũng phải đổi sang màu hoàn tất theo rule cũ.
+Chỉ vùng ngày sửa `E2:F2` và hai vùng báo cáo `B31:F31`, `B33:F33` được tô màu hoàn tất. Các trường thẻ (`B2:D2`, `B3:C3`, `B4`, `B5:D5`, `E5:F5`) và màu tab giữ nguyên format của `FORMAT`.
 
 Trước khi bật cho dữ liệu production, cần chạy chế độ **dry-run chỉ đọc** trên ít nhất một form của mỗi công ty để xác nhận các merge range `B2:D2`, `B3:C3`, `B5:D5`, `E5:F5`, vị trí `B31`, `B33` không thay đổi. Kết quả dry-run chỉ trả địa chỉ ô, không trả dữ liệu thẻ vào log.
 

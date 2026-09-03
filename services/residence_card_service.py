@@ -13,7 +13,6 @@ from google.oauth2.service_account import Credentials
 
 from config.sheet_config import (
     COLOR_CELL_DONE,
-    COLOR_TAB_DONE,
     FORM_ADDRESS_CELL,
     FORM_COMPANY_BRANCH_CELL,
     FORM_CURRENT_REPORT_CELL,
@@ -327,16 +326,14 @@ def write_residence_card_form(
         if actual != expected:
             raise RuntimeError("Xac minh sau khi ghi that bai; vui long kiem tra form truoc khi gui lai")
 
+    # Keep personal/card fields in the original FORMAT template style.  Only
+    # the revised date and the two report sections are marked as updated.
     worksheet.batch_format([
         {
-            "range": FORM_HIGHLIGHT_RANGES[cell],
+            "range": cell_range,
             "format": {"backgroundColor": COLOR_CELL_DONE},
         }
-        for cell in values
+        for cell_range in FORM_HIGHLIGHT_RANGES.values()
     ])
-    spreadsheet.batch_update({"requests": [{"updateSheetProperties": {
-        "properties": {"sheetId": worksheet.id, "tabColor": COLOR_TAB_DONE},
-        "fields": "tabColor",
-    }}]})
     logger.info("[RESIDENCE CARD] Form write verified for workbook=%s tab=%s", spreadsheet_id, worksheet.title)
     return {"tab_name": worksheet.title, "created": created}

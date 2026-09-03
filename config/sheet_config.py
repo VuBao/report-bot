@@ -31,13 +31,10 @@ FORM_VISA_EXPIRY_CELL = "E5"
 FORM_CURRENT_REPORT_CELL = "B31"
 FORM_FUTURE_REPORT_CELL = "B33"
 FORM_TEMPLATE = "FORMAT"
+# Only fields whose content changes between reporting cycles are highlighted.
+# The residence-card identity fields retain the original FORMAT-sheet styling.
 FORM_HIGHLIGHT_RANGES = {
-    FORM_COMPANY_BRANCH_CELL: "B2:D2",
     FORM_DATE_CELL: "E2:F2",
-    FORM_NAME_CELL: "B3:C3",
-    FORM_DOB_CELL: "B4",
-    FORM_ADDRESS_CELL: "B5:D5",
-    FORM_VISA_EXPIRY_CELL: "E5:F5",
     FORM_CURRENT_REPORT_CELL: "B31:F31",
     FORM_FUTURE_REPORT_CELL: "B33:F33",
 }
