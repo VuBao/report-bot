@@ -28,7 +28,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-MIN_CONFIDENCE = 0.98
+# The sender reviews every extracted value and must explicitly confirm before
+# writing.  A 0.98 threshold was unnecessarily strict for otherwise legible
+# residence-card addresses, causing needless resubmissions.
+MIN_CONFIDENCE = 0.80
 _DATE_RE = re.compile(r"^(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日$")
 
 VISION_PROMPT = """
