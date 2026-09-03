@@ -80,6 +80,7 @@ Theo form trong ảnh, các ô giá trị (hoặc ô đầu của vùng merge) l
 | Dữ liệu | Ô đích | Giá trị ghi |
 | --- | --- | --- |
 | Công ty + chi nhánh | `B2` (vùng merge `B2:D2`) | `株式会社アスラポート     藤平ラ−メン大阪店` — công ty, 5 khoảng trắng, chi nhánh |
+| Ngày tạo báo cáo | `E2` (vùng merge `E2:F2`) | `作成日：YYYY年MM月DD日` |
 | Họ tên | `B3` (vùng merge `B3:C3`) | Họ tên trên thẻ, sau khi đối chiếu với dòng 2 |
 | Ngày sinh | `B4` | Ngày sinh trên thẻ, định dạng ngày Nhật thống nhất |
 | Địa chỉ | `B5` (vùng merge `B5:D5`) | Địa chỉ hợp lệ mới nhất theo quy tắc mặt trước/mặt sau |
@@ -88,6 +89,7 @@ Theo form trong ảnh, các ô giá trị (hoặc ô đầu của vùng merge) l
 | Báo cáo — mục tiêu tương lai | `B33` | Nội dung Nhật đã dịch hoàn chỉnh |
 
 `B31` và `B33` thay thế việc dò label/hàng tương lai khác nhau trong luồng cũ cho feature này. Các hàng báo cáo chỉ được ghi sau khi dữ liệu đầu vào và kết quả dịch đã qua kiểm tra.
+Tất cả vùng được bot ghi (`B2:D2`, `E2:F2`, `B3:C3`, `B4`, `B5:D5`, `E5:F5`, `B31:F31`, `B33:F33`) phải được tô màu hoàn tất; tab user cũng phải đổi sang màu hoàn tất theo rule cũ.
 
 Trước khi bật cho dữ liệu production, cần chạy chế độ **dry-run chỉ đọc** trên ít nhất một form của mỗi công ty để xác nhận các merge range `B2:D2`, `B3:C3`, `B5:D5`, `E5:F5`, vị trí `B31`, `B33` không thay đổi. Kết quả dry-run chỉ trả địa chỉ ô, không trả dữ liệu thẻ vào log.
 

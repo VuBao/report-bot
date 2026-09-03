@@ -12,11 +12,15 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from config.sheet_config import (
+    COLOR_CELL_DONE,
+    COLOR_TAB_DONE,
     FORM_ADDRESS_CELL,
     FORM_COMPANY_BRANCH_CELL,
     FORM_CURRENT_REPORT_CELL,
+    FORM_DATE_CELL,
     FORM_DOB_CELL,
     FORM_FUTURE_REPORT_CELL,
+    FORM_HIGHLIGHT_RANGES,
     FORM_NAME_CELL,
     FORM_TEMPLATE,
     FORM_VISA_EXPIRY_CELL,
@@ -111,6 +115,11 @@ def _parse_japanese_date(value, field, *, allow_past=True):
     if not allow_past and parsed < date.today():
         raise ValueError("Han visa tren the da qua; vui long kiem tra lai anh")
     return f"{parsed.year:04d}年{parsed.month:02d}月{parsed.day:02d}日"
+
+
+def _today_japanese():
+    now = datetime.now()
+    return f"作成日：{now.year}年{now.month:02d}月{now.day:02d}日"
 
 
 def validate_card(card, submitted_name):
@@ -262,6 +271,7 @@ def _verify_form_layout(spreadsheet, worksheet):
         raise ValueError("Khong the xac minh cau truc tab form")
     required_merges = (
         (1, 2, 1, 4),  # B2:D2
+        (1, 2, 4, 6),  # E2:F2
         (2, 3, 1, 3),  # B3:C3
         (4, 5, 1, 4),  # B5:D5
         (4, 5, 4, 6),  # E5:F5
@@ -297,6 +307,7 @@ def write_residence_card_form(
 
     values = {
         FORM_COMPANY_BRANCH_CELL: f"{company_name}     {branch_name}",
+        FORM_DATE_CELL: _today_japanese(),
         FORM_NAME_CELL: employee_name,
         FORM_DOB_CELL: card_values["date_of_birth"],
         FORM_ADDRESS_CELL: card_values["address"],
@@ -315,5 +326,17 @@ def write_residence_card_form(
         actual = actual_values[0][0] if actual_values and actual_values[0] else ""
         if actual != expected:
             raise RuntimeError("Xac minh sau khi ghi that bai; vui long kiem tra form truoc khi gui lai")
+
+    worksheet.batch_format([
+        {
+            "range": FORM_HIGHLIGHT_RANGES[cell],
+            "format": {"backgroundColor": COLOR_CELL_DONE},
+        }
+        for cell in values
+    ])
+    spreadsheet.batch_update({"requests": [{"updateSheetProperties": {
+        "properties": {"sheetId": worksheet.id, "tabColor": COLOR_TAB_DONE},
+        "fields": "tabColor",
+    }}]})
     logger.info("[RESIDENCE CARD] Form write verified for workbook=%s tab=%s", spreadsheet_id, worksheet.title)
     return {"tab_name": worksheet.title, "created": created}
