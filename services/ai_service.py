@@ -205,8 +205,17 @@ SYSTEM_PROMPT = """
 - 日付、期間、回数、金額、人数、日本語レベル、試験、資格、在留資格、帰国・退職・転職予定を一文字ずつ慎重に扱うこと。
 - 「未定」「検討中」「希望」「予定」「可能性」「決定済み」を明確に区別し、確度を強めたり弱めたりしないこと。
 - 問題が書かれていないだけで「問題なし」「生活が安定」「職場関係が良好」等を追加しないこと。
-- 入力が短い場合は出力も短くすること。文字数を増やす目的の言い換え、説明、一般論は禁止する。
+- 作成前に原文を独立した事実へ内部的に分解し、各事実をちょうど一度ずつ出力へ反映すること。
+- 入社時期、店舗規模、スタッフ構成、担当業務、過去の経験、習得状況、上司との関係、
+  ストレス、生活、満足度、学習希望、長期滞在の意向、帰国予定等を別々の確認項目として扱うこと。
+- 同じ意味の繰り返しだけは統合できるが、異なる情報を「順調」等の一語にまとめて省略しないこと。
+- 情報量が多い入力は、各事実が具体的に分かる十分な長さで記述すること。ただし、文字数を増やすための
+  言い換え、説明、一般論は禁止する。入力が短い場合は出力も短くすること。
 - 読み取れない、矛盾する、意味が曖昧な箇所を推測で補わないこと。
+- 本人の感想（例：「仕事は簡単」「問題を感じない」）を客観的事実へ強めず、
+  「本人は業務に難しさを感じていないとのことです」のように申告として記載すること。
+- ベトナム語の「không/chưa xác định ở Nhật lâu dài」は、長期滞在するか未決定という意味であり、
+  「日本に長く滞在するつもりはない」と訳してはならない。
 
 【文体】
 - 入管向けの面談報告として、丁寧、客観的、簡潔かつ自然なビジネス日本語を用いること。
@@ -334,22 +343,40 @@ def _build_report_user_content(raw_text: str, employee_name: str) -> str:
         f"報告内容:\n{raw_text}"
     )
 
-def generate_report(raw_text: str, employee_name: str) -> dict:
-    user_content = _build_report_user_content(raw_text, employee_name)
-    raw = _call_ai(
-        system_prompt=SYSTEM_PROMPT,
-        user_content=user_content,
-        max_tokens=4500,
-        openai_model=os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL)),
-        anthropic_model=os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL)),
-    )
-    result = _loads_json(raw)
-    result = _apply_term_fixes(result)
+
+def _validate_report_result(result):
     expected_keys = {"current_situation", "future_plan"}
     if not isinstance(result, dict) or set(result) != expected_keys:
         raise ValueError("AI tra ve sai cau truc bao cao")
     if not all(isinstance(result[key], str) for key in expected_keys):
         raise ValueError("AI tra ve noi dung bao cao khong hop le")
+    return result
+
+
+def _review_passed(review):
+    return (
+        isinstance(review, dict)
+        and set(review) == {"passed", "issues", "summary"}
+        and isinstance(review.get("passed"), bool)
+        and isinstance(review.get("issues"), list)
+        and isinstance(review.get("summary"), str)
+        and review["passed"] is True
+        and not review["issues"]
+    )
+
+
+def generate_report(raw_text: str, employee_name: str) -> dict:
+    user_content = _build_report_user_content(raw_text, employee_name)
+    openai_model = os.getenv("OPENAI_MODEL", os.getenv("AI_MODEL", DEFAULT_OPENAI_MODEL))
+    anthropic_model = os.getenv("ANTHROPIC_MODEL", os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL))
+    raw = _call_ai(
+        system_prompt=SYSTEM_PROMPT,
+        user_content=user_content,
+        max_tokens=4500,
+        openai_model=openai_model,
+        anthropic_model=anthropic_model,
+    )
+    result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
 
     review = review_report(
         raw_text,
@@ -357,14 +384,31 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
         result["current_situation"],
         result["future_plan"],
     )
-    review_is_valid = (
-        isinstance(review, dict)
-        and set(review) == {"passed", "issues", "summary"}
-        and isinstance(review.get("passed"), bool)
-        and isinstance(review.get("issues"), list)
-        and isinstance(review.get("summary"), str)
-    )
-    if not review_is_valid or review["passed"] is not True or review["issues"]:
+    if not _review_passed(review):
+        revision_request = (
+            f"{user_content}\n\n"
+            "【前回の報告書】\n"
+            f"{json.dumps(result, ensure_ascii=False)}\n\n"
+            "【ファクトチェックで指摘された問題】\n"
+            f"{json.dumps(review.get('issues', []), ensure_ascii=False)}\n\n"
+            "原文だけを根拠に、全事実を漏れなく反映して報告書を修正してください。"
+        )
+        revised_raw = _call_ai(
+            system_prompt=SYSTEM_PROMPT,
+            user_content=revision_request,
+            max_tokens=4500,
+            openai_model=openai_model,
+            anthropic_model=anthropic_model,
+        )
+        result = _validate_report_result(_apply_term_fixes(_loads_json(revised_raw)))
+        review = review_report(
+            raw_text,
+            employee_name,
+            result["current_situation"],
+            result["future_plan"],
+        )
+
+    if not _review_passed(review):
         raise ValueError(
             "Bao cao AI khong vuot qua buoc doi chieu noi dung goc; "
             "khong ghi vao Sheet"
@@ -384,6 +428,8 @@ REVIEW_PROMPT = '''
 5. 現在の事実と将来の希望・予定を取り違えている。
 6. 特定技能1号、特定技能2号、技能実習、技能検定を混同している。
 7. 原文の曖昧な箇所を推測して断定している。
+8. 原文の独立した事実を「順調」「問題なし」等へまとめ、具体的な情報を落としている。
+9. 本人の感想を客観的な評価へ変えている。
 
 次は不一致ではなく、必ず許容してください：
 - 意味が同じ自然な日本語への翻訳、同義表現、敬語、文法上必要な接続。
@@ -391,6 +437,8 @@ REVIEW_PROMPT = '''
 - 対象者名を冒頭の「姓＋さん」以外では「本人」とすること、および会社名を本文から除くこと。
 - 例：「không gặp khó khăn」→「困難はない」、「đã đạt N3」→「N3を取得している」、
   「dự định thi N2」→「N2を受験する予定」、「Sức khỏe tốt」→「健康状態は良好」。
+- 「không/chưa xác định ở Nhật lâu dài」は長期滞在するか未決定であり、
+  「日本に長く滞在するつもりはない」とは意味が異なるため不合格にすること。
 
 単なる言い回しの違い、「一致していない可能性がある」という疑いだけでは不合格にしないでください。
 passed=false にする場合、各 issue には追加・欠落・変化した具体的な事実を明記してください。
