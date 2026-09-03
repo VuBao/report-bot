@@ -97,17 +97,36 @@ def find_spreadsheet_id(company_name):
 
 
 def find_spreadsheet_id_strict(company_name):
-    """Find exactly one company workbook; never use fuzzy matching for ID-card data."""
+    """Find a company workbook, accepting one unambiguous close match for card data."""
     key = _normalize(company_name)
     matches = [file for file in _get_all_files() if _normalize(file["name"]) == key]
     if len(matches) == 1:
         file = matches[0]
         logger.info("[DRIVE STRICT] Found one exact company workbook")
         return file["id"], file["name"]
-    if not matches:
-        logger.warning("[DRIVE STRICT] No exact workbook for company")
+    if len(matches) > 1:
+        raise ValueError("Co nhieu file Google Sheet trung ten cong ty; khong the chon an toan")
+
+    # Company names in Telegram often differ from Drive filenames only by
+    # punctuation, spacing, or a branch suffix.  Accept the closest match when
+    # it is unambiguous; never silently pick between equally good candidates.
+    scored_matches = [
+        (_match_score(key, _normalize(file["name"])), file)
+        for file in _get_all_files()
+    ]
+    scored_matches = [(score, file) for score, file in scored_matches if score > 0]
+    if not scored_matches:
+        logger.warning("[DRIVE STRICT] No workbook or close match for company")
         return None, None
-    raise ValueError("Co nhieu file Google Sheet trung ten cong ty; khong the chon an toan")
+
+    best_score = max(score for score, _ in scored_matches)
+    best_matches = [file for score, file in scored_matches if score == best_score]
+    if len(best_matches) != 1:
+        raise ValueError("Co nhieu Google Sheet gan dung ten cong ty; khong the chon an toan")
+
+    file = best_matches[0]
+    logger.info("[DRIVE CLOSE MATCH] Selected %s (score=%s)", file["name"], best_score)
+    return file["id"], file["name"]
 
 
 def find_or_create_company_spreadsheet(company_name):
