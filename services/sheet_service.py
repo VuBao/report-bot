@@ -80,6 +80,47 @@ def _find_checklist_employee_row(all_values, employee_name):
     return None
 
 
+def _formula_argument_separator(worksheet):
+    """Return the formula separator required by the spreadsheet locale."""
+    try:
+        locale = worksheet.spreadsheet.fetch_sheet_metadata().get("properties", {}).get("locale", "")
+    except Exception as exc:
+        logger.warning("[CHECKLIST] Khong doc duoc locale spreadsheet: %s", exc)
+        locale = ""
+    # The production checklist is vi_VN, where Sheets requires semicolons in
+    # multi-argument formulas such as COUNTIF. English locales use commas.
+    return ";" if locale.lower().startswith("vi") else ","
+
+
+def _summary_formulas(user_range, status_range, done_mark, separator):
+    """Build locale-correct, live summary formulas for the checklist."""
+    return [
+        [f'="Tổng user: "&COUNT({user_range})'],
+        [f'="Đã xử lý: "&COUNTIF({status_range}{separator}"{done_mark}")'],
+        [f'="Còn lại: "&COUNT({user_range})-COUNTIF({status_range}{separator}"{done_mark}")'],
+    ]
+
+
+def _clear_stale_summary_formulas(worksheet, first_row):
+    """Remove only old bot-generated statistics below the current roster."""
+    formula_rows = worksheet.get(
+        f"{COL_CHECKLIST_MARK}{first_row}:{COL_CHECKLIST_MARK}{worksheet.row_count}",
+        value_render_option="FORMULA",
+    )
+    stale_cells = []
+    for row_number, row in enumerate(formula_rows, start=first_row):
+        value = row[0] if row else ""
+        if isinstance(value, str) and value.startswith((
+            '="Tổng user: "&COUNT(',
+            '="Đã xử lý: "&COUNTIF(',
+            '="Còn lại: "&COUNT(',
+        )):
+            stale_cells.append(f"{COL_CHECKLIST_MARK}{row_number}")
+    if stale_cells:
+        worksheet.batch_clear(stale_cells)
+        logger.info("[CHECKLIST] Da xoa %s cong thuc thong ke cu", len(stale_cells))
+
+
 def _update_checklist_summary(worksheet, all_values):
     """Keep live totals below column G, driven by the checklist status in G.
 
@@ -107,11 +148,13 @@ def _update_checklist_summary(worksheet, all_values):
     status_range = f"{COL_CHECKLIST_MARK}{CHECKLIST_FIRST_DATA_ROW}:{COL_CHECKLIST_MARK}{last_roster_row}"
     user_range = f"{COL_CHECKLIST_USER_NUMBER}{CHECKLIST_FIRST_DATA_ROW}:{COL_CHECKLIST_USER_NUMBER}{last_roster_row}"
     done_mark = CHECKLIST_DONE_MARK.replace('"', '""')
-    formulas = [
-        [f'="Tổng user: "&COUNT({user_range})'],
-        [f'="Đã xử lý: "&COUNTIF({status_range},"{done_mark}")'],
-        [f'="Còn lại: "&COUNT({user_range})-COUNTIF({status_range},"{done_mark}")'],
-    ]
+    formulas = _summary_formulas(
+        user_range,
+        status_range,
+        done_mark,
+        _formula_argument_separator(worksheet),
+    )
+    _clear_stale_summary_formulas(worksheet, last_roster_row + 1)
     worksheet.update(
         f"{COL_CHECKLIST_MARK}{summary_row}:{COL_CHECKLIST_MARK}{summary_row + 2}",
         formulas,
