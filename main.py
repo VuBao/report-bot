@@ -3,6 +3,7 @@ import os
 import logging
 import asyncio
 import time
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update
@@ -74,6 +75,24 @@ def _parse_card_payload(text):
         "branch_name": lines[2],
         "report_text": report_text,
     }
+
+
+def _card_preview_text(payload, card_values, company_form_will_be_created):
+    form_notice = (
+        "Chua co form cua cong ty: se tao tu COPY sau khi xac nhan.\n"
+        if company_form_will_be_created else ""
+    )
+    return (
+        "Kiem tra truoc khi ghi (chi nguoi gui album moi duoc xac nhan):\n\n"
+        f"Cong ty + chi nhanh: {payload['company_name']}     {payload['branch_name']}\n"
+        f"Ho ten: {card_values['full_name']}\n"
+        f"Ngay sinh: {card_values['date_of_birth']}\n"
+        f"Dia chi: {card_values['address']}\n"
+        f"Han visa: {card_values['visa_expiry']}\n\n"
+        f"{form_notice}"
+        "Neu can sua dia chi, gui: DIA CHI: [dia chi dung]\n"
+        "Tra loi XAC NHAN de ghi, hoac HUY de bo qua."
+    )
 
 
 async def _download_card_images(bot, file_ids):
@@ -160,19 +179,8 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
         "file_name": file_name,
         "company_form_will_be_created": spreadsheet_id is None,
     }
-    form_notice = (
-        "Chua co form cua cong ty: se tao tu COPY sau khi xac nhan.\n"
-        if spreadsheet_id is None else ""
-    )
     await message.reply_text(
-        "Kiem tra truoc khi ghi (chi nguoi gui album moi duoc xac nhan):\n\n"
-        f"Cong ty + chi nhanh: {payload['company_name']}     {payload['branch_name']}\n"
-        f"Ho ten: {card_values['full_name']}\n"
-        f"Ngay sinh: {card_values['date_of_birth']}\n"
-        f"Dia chi: {card_values['address']}\n"
-        f"Han visa: {card_values['visa_expiry']}\n\n"
-        f"{form_notice}"
-        "Bao cao se duoc dich va ghi vao B31/B33. Tra loi XAC NHAN de ghi, hoac HUY de bo qua."
+        _card_preview_text(payload, card_values, spreadsheet_id is None)
     )
 
 
@@ -225,7 +233,21 @@ async def _handle_card_confirmation(message):
         await message.reply_text("Chi nguoi da gui album the moi co the xac nhan hoac huy.")
         return True
 
-    command = " ".join(message.text.strip().upper().split())
+    raw_command = message.text.strip()
+    address_match = re.fullmatch(r"(?:DIA\s*CHI|ĐỊA\s*CHỈ)\s*:\s*(.+)", raw_command, re.IGNORECASE | re.DOTALL)
+    if address_match:
+        pending["card_values"]["address"] = address_match.group(1).strip()
+        await message.reply_text(
+            "Da cap nhat dia chi trong ban xem truoc. Chua co du lieu nao duoc ghi vao Sheet.\n\n"
+            + _card_preview_text(
+                pending["payload"],
+                pending["card_values"],
+                pending["company_form_will_be_created"],
+            )
+        )
+        return True
+
+    command = " ".join(raw_command.upper().split())
     if command == "HUY":
         CARD_CONFIRMATIONS.pop(chat_id, None)
         await message.reply_text("Da huy. Chua co du lieu nao duoc ghi vao Sheet.")
