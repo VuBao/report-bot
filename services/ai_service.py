@@ -603,7 +603,16 @@ def review_report(raw_text: str, employee_name: str, current_situation: str, fut
         system_prompt=REVIEW_PROMPT,
         user_content=user_content,
         max_tokens=1000,
-        openai_model=os.getenv("OPENAI_REVIEW_MODEL", os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)),
+        # Use the same strong model as drafting unless an explicit review model
+        # is configured. A weaker reviewer was falsely rejecting valid,
+        # source-preserving Japanese reports produced by the report model.
+        openai_model=os.getenv(
+            "OPENAI_REVIEW_MODEL",
+            os.getenv(
+                "OPENAI_REPORT_MODEL",
+                os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+            ),
+        ),
         anthropic_model=os.getenv("ANTHROPIC_REVIEW_MODEL", "claude-sonnet-4-6"),
     )
     return _loads_json(raw)
