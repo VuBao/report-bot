@@ -20,9 +20,9 @@ def extract_certified_japanese_level(raw_text: str) -> str | None:
     text = unicodedata.normalize("NFKC", raw_text or "")
     patterns = (
         # Vietnamese: da dau/dat/co chung chi N2.
-        r"(?:đã\s*)?(?:thi\s*)?(?:đậu|đạt|có)(?:\s+(?:chứng chỉ|trình độ|JLPT))?\s*N\s*([1-5])",
-        # Japanese: N2に合格 / N2を取得済み.
-        r"N\s*([1-5])\s*(?:に|を)?\s*(?:合格|取得)(?:済み)?",
+        r"(?:đã\s*)?(?:thi\s*)?(?:đậu|đạt|có)(?:\s+(?:chứng chỉ|trình độ|JLPT|tiếng Nhật|nhật ngữ))*\s*N\s*([1-5])",
+        # Japanese: N2に合格 / N2を取得済み / JLPT N2の資格を取得済み.
+        r"(?:JLPT\s*)?N\s*([1-5])(?:\s*の\s*(?:資格|級))?\s*(?:に|を)?\s*(?:合格|取得)(?:済み)?",
         # English notes occasionally appear in a prepared interview summary.
         r"(?:passed|obtained)\s+(?:JLPT\s*)?N\s*([1-5])",
     )
@@ -35,7 +35,10 @@ def extract_certified_japanese_level(raw_text: str) -> str | None:
             # into a qualification merely because it contains a positive verb.
             if re.search(r"(?:chưa|không|khong|not)(?:\s+(?:đã|thi))*\s*$", before):
                 continue
-            if any(negative in after for negative in ("していない", "しません", "できない", "未取得")):
+            if any(negative in after for negative in (
+                "していない", "しません", "できない", "未取得",
+                "する予定", "を目指", "予定です",
+            )):
                 continue
             levels.append(int(match.group(1)))
     return f"N{min(levels)}" if levels else None
