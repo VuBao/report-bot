@@ -220,8 +220,8 @@ SYSTEM_PROMPT = """
 - 独立した事実が8件以上ある場合、各事実を申告者の視点が分かる完結した一文として展開し、
   current_situation は概ね450〜700字、future_plan は該当事実数に応じて150〜350字を目安とすること。
   事実を短い総評へ圧縮したり、複数の事実を一つの定型文へ置き換えたりしないこと。
-  この条件に当てはまる入力で current_situation が420字未満の出力は不合格である。出力前に
-  各事実が個別の文として残っていることを確認し、不足していれば原文の事実だけで書き直すこと。
+  この条件に当てはまる入力で current_situation が420字未満の場合は、出力前に各事実が個別の
+  文として残っているか確認し、原文の事実だけを用いてより丁寧に書き直すこと。
   この字数は事実を追加する理由にしてはならず、全事実を明示した結果としてのみ用いること。
 - 読み取れない、矛盾する、意味が曖昧な箇所を推測で補わないこと。
 - 本人の感想（例：「仕事は簡単」「問題を感じない」）を客観的事実へ強めず、
@@ -240,6 +240,9 @@ SYSTEM_PROMPT = """
 - 機械翻訳調や箇条書き調を避け、事実関係を変えない範囲で接続を整えること。
 - 各独立した事実は、主語・時制・本人の認識が分かる一文で丁寧に展開すること。抽象的な
   「全体として順調です」だけで具体的な事実を置き換えないこと。
+- 内容を豊かにするため、原文にある一つの事実を、主語・時点・本人の認識・その事実が及ぶ
+  場面が明確になる自然な敬語文へ展開してよい。ただし、新しい出来事、理由、評価、支援、
+  予定、因果関係を創作してはならない。
 - 支援機関や会社による評価、保証、判断を、原文にない限り書かないこと。
 - 対象者名は冒頭の一度だけ「姓＋さん」として使用でき、以後は「本人」とする。会社名は本文に記載しないこと。
 
@@ -405,13 +408,13 @@ def _review_passed(review):
 
 
 def _detail_issues(raw_text: str, report: dict) -> list[str]:
-    """Reject overly compressed reports before they can reach a Sheet.
+    """Ask for a fuller rewrite of an overly compressed, fact-checked report.
 
     A long, pre-organised interview note contains many independent facts.  A
-    short Japanese summary can be factually true while still dropping the
-    useful detail required by a Nyukan report.  This is deliberately a retry
-    gate, not permission to invent text: the next model call receives the
-    original input and must expand only facts already present there.
+    short Japanese summary can be factually true while still omitting useful
+    detail required by a Nyukan report. This requests a retry, not permission
+    to invent text. A fact-checked report remains exportable if all richer
+    rewrites are still too short.
     """
     source_size = len(re.sub(r"\s+", "", raw_text or ""))
     current_size = len(re.sub(r"\s+", "", report.get("current_situation", "")))
@@ -435,6 +438,7 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
     previous_report = None
     review_issues = []
     last_error = None
+    last_fact_checked_report = None
 
     for attempt in range(REPORT_MAX_ATTEMPTS):
         if previous_report is None:
@@ -461,12 +465,6 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
                 temperature=0.2,
             )
             result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
-            detail_issues = _detail_issues(raw_text, result)
-            if detail_issues:
-                previous_report = result
-                review_issues = detail_issues
-                last_error = "Bao cao qua ngan so voi thong tin phong van"
-                continue
             review = review_report(
                 raw_text,
                 employee_name,
@@ -479,11 +477,26 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
             continue
 
         if _review_passed(review):
+            detail_issues = _detail_issues(raw_text, result)
+            if detail_issues:
+                # Prefer a fuller version, but never make length alone block a
+                # report that has already passed the strict factual review.
+                last_fact_checked_report = result
+                previous_report = result
+                review_issues = detail_issues
+                last_error = "Bao cao qua ngan so voi thong tin phong van"
+                continue
             return result
 
         previous_report = result
         review_issues = review.get("issues", []) if isinstance(review, dict) else []
         last_error = "Bao cao chua vuot qua buoc doi chieu noi dung"
+
+    if last_fact_checked_report is not None:
+        # The report is safe to show/export: it passed fact checking.  The
+        # desired length is a quality preference, never a reason to hide a
+        # correct report from the user.
+        return last_fact_checked_report
 
     raise ValueError(
         f"Bao cao AI van con loi sau {REPORT_MAX_ATTEMPTS} vong doi chieu; "
