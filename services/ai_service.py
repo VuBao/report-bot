@@ -8,6 +8,38 @@ DEFAULT_OPENAI_MODEL = "gpt-4o"
 MODEL = DEFAULT_ANTHROPIC_MODEL
 REPORT_MAX_ATTEMPTS = 4
 
+
+def extract_certified_japanese_level(raw_text: str) -> str | None:
+    """Return the highest explicitly obtained JLPT level from an interview.
+
+    A planned exam or ongoing study is not an obtained qualification, so it
+    must never populate the form field.  N1 is the highest level.
+    """
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", raw_text or "")
+    patterns = (
+        # Vietnamese: da dau/dat/co chung chi N2.
+        r"(?:đã\s*)?(?:thi\s*)?(?:đậu|đạt|có)(?:\s+(?:chứng chỉ|trình độ|JLPT))?\s*N\s*([1-5])",
+        # Japanese: N2に合格 / N2を取得済み.
+        r"N\s*([1-5])\s*(?:に|を)?\s*(?:合格|取得)(?:済み)?",
+        # English notes occasionally appear in a prepared interview summary.
+        r"(?:passed|obtained)\s+(?:JLPT\s*)?N\s*([1-5])",
+    )
+    levels = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            before = text[max(0, match.start() - 20):match.start()].lower()
+            after = text[match.end():match.end() + 12]
+            # Do not turn "chưa/không đậu N2" or "N2に合格していない"
+            # into a qualification merely because it contains a positive verb.
+            if re.search(r"(?:chưa|không|khong|not)(?:\s+(?:đã|thi))*\s*$", before):
+                continue
+            if any(negative in after for negative in ("していない", "しません", "できない", "未取得")):
+                continue
+            levels.append(int(match.group(1)))
+    return f"N{min(levels)}" if levels else None
+
 LEGACY_SYSTEM_PROMPT = """
 あなたは特定技能外国人の定期面談内容をまとめ、入国在留管理庁への報告書を作成する担当者です。
 ベトナム語の面談メモを、自然で客観的な日本語の報告書に変換してください。

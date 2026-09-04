@@ -20,6 +20,7 @@ from config.sheet_config import (
     FORM_DOB_CELL,
     FORM_FUTURE_REPORT_CELL,
     FORM_HIGHLIGHT_RANGES,
+    FORM_JAPANESE_LEVEL_CELL,
     FORM_NAME_CELL,
     FORM_TEMPLATE,
     FORM_VISA_EXPIRY_CELL,
@@ -293,6 +294,7 @@ def write_residence_card_form(
     card_values,
     current_situation,
     future_plan,
+    japanese_level=None,
 ):
     """Create/select the exact employee tab, write all fields, then verify read-back."""
     gc = _get_client()
@@ -314,6 +316,10 @@ def write_residence_card_form(
         FORM_CURRENT_REPORT_CELL: current_situation,
         FORM_FUTURE_REPORT_CELL: future_plan,
     }
+    # Preserve a manually recorded level when the interview only mentions a
+    # planned exam or study.  Write F23 only for an explicitly obtained level.
+    if japanese_level:
+        values[FORM_JAPANESE_LEVEL_CELL] = japanese_level
     worksheet.batch_update([
         {"range": cell, "values": [[value]]}
         for cell, value in values.items()

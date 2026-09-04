@@ -14,7 +14,7 @@ from utils.drive_finder import (
     find_spreadsheet_id_strict,
     find_or_create_company_spreadsheet,
 )
-from services.ai_service import generate_report
+from services.ai_service import extract_certified_japanese_level, generate_report
 from services.sheet_service import process_employee_sheet, mark_checklist
 from services.residence_card_service import (
     extract_residence_card,
@@ -166,6 +166,7 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
             payload["report_text"],
             card_values["full_name"],
         )
+        japanese_level = extract_certified_japanese_level(payload["report_text"])
     except Exception as exc:
         logger.exception("[CARD PREPARE ERROR] %s", exc)
         await message.reply_text(f"Chua ghi du lieu: {exc}")
@@ -178,6 +179,7 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
         "payload": payload,
         "card_values": card_values,
         "report": report,
+        "japanese_level": japanese_level,
         "spreadsheet_id": spreadsheet_id,
         "file_name": file_name,
         "company_form_will_be_created": spreadsheet_id is None,
@@ -276,6 +278,7 @@ async def _handle_card_confirmation(message):
             pending["card_values"],
             pending["report"]["current_situation"],
             pending["report"]["future_plan"],
+            pending["japanese_level"],
         )
     except Exception as exc:
         logger.exception("[CARD WRITE ERROR] %s", exc)
