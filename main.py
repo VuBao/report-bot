@@ -166,7 +166,14 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
             payload["report_text"],
             card_values["full_name"],
         )
+        # Prefer the source note, then use the fact-checked Japanese report as
+        # a safe fallback for equivalent wording the Vietnamese matcher did
+        # not recognise (for example, "JLPT N2の資格を取得済み").
         japanese_level = extract_certified_japanese_level(payload["report_text"])
+        if japanese_level is None:
+            japanese_level = extract_certified_japanese_level(
+                f"{report['current_situation']}\n{report['future_plan']}"
+            )
     except Exception as exc:
         logger.exception("[CARD PREPARE ERROR] %s", exc)
         await message.reply_text(f"Chua ghi du lieu: {exc}")
