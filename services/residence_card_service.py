@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 import unicodedata
 from datetime import date, datetime
 
@@ -36,6 +37,8 @@ SCOPES = [
 # writing.  A 0.98 threshold was unnecessarily strict for otherwise legible
 # residence-card addresses, causing needless resubmissions.
 MIN_CONFIDENCE = 0.80
+GOOGLE_WRITE_MAX_ATTEMPTS = 5
+GOOGLE_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 _DATE_RE = re.compile(r"^(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日$")
 
 VISION_PROMPT = """
@@ -72,6 +75,23 @@ def _get_client():
         scopes=SCOPES,
     )
     return gspread.authorize(creds)
+
+
+def _google_error_status(exc):
+    """Extract an HTTP status from gspread/google API exceptions when present."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None) or getattr(response, "status", None)
+    if status:
+        return int(status)
+    for arg in getattr(exc, "args", ()):
+        if isinstance(arg, dict) and arg.get("code"):
+            return int(arg["code"])
+    return None
+
+
+def _is_transient_google_error(exc):
+    status = _google_error_status(exc)
+    return status == 429 or (status is not None and 500 <= status < 600)
 
 
 def normalize_name(value):
@@ -287,7 +307,7 @@ def _verify_form_layout(spreadsheet, worksheet):
         raise ValueError("Form khong co du hang B31/B33")
 
 
-def write_residence_card_form(
+def _write_residence_card_form_once(
     spreadsheet_id,
     company_name,
     branch_name,
@@ -343,3 +363,39 @@ def write_residence_card_form(
     ])
     logger.info("[RESIDENCE CARD] Form write verified for workbook=%s tab=%s", spreadsheet_id, worksheet.title)
     return {"tab_name": worksheet.title, "created": created}
+
+
+def write_residence_card_form(
+    spreadsheet_id,
+    company_name,
+    branch_name,
+    card_values,
+    current_situation,
+    future_plan,
+    japanese_level=None,
+):
+    """Write a form safely, retrying only transient Google API failures.
+
+    Repeating this operation is safe: it locates an already-created employee
+    tab and overwrites the same approved cells with the same values.
+    """
+    for attempt in range(1, GOOGLE_WRITE_MAX_ATTEMPTS + 1):
+        try:
+            return _write_residence_card_form_once(
+                spreadsheet_id,
+                company_name,
+                branch_name,
+                card_values,
+                current_situation,
+                future_plan,
+                japanese_level,
+            )
+        except Exception as exc:
+            if not _is_transient_google_error(exc) or attempt == GOOGLE_WRITE_MAX_ATTEMPTS:
+                raise
+            delay = GOOGLE_WRITE_RETRY_DELAYS_SECONDS[attempt - 1]
+            logger.warning(
+                "[RESIDENCE CARD] Google API returned %s; retry %s/%s in %ss",
+                _google_error_status(exc), attempt, GOOGLE_WRITE_MAX_ATTEMPTS, delay,
+            )
+            time.sleep(delay)

@@ -268,7 +268,6 @@ async def _handle_card_confirmation(message):
         await message.reply_text("Yeu cau dang cho xac nhan. Tra loi XAC NHAN hoac HUY.")
         return True
 
-    CARD_CONFIRMATIONS.pop(chat_id, None)
     try:
         spreadsheet_id = pending["spreadsheet_id"]
         company_form_created = False
@@ -289,8 +288,13 @@ async def _handle_card_confirmation(message):
         )
     except Exception as exc:
         logger.exception("[CARD WRITE ERROR] %s", exc)
-        await message.reply_text(f"Khong the hoan tat ghi form: {exc}")
+        await message.reply_text(
+            "Google Sheets tam thoi khong san sang de ghi form. Du lieu xac nhan "
+            "van duoc giu lai; vui long doi it phut va gui lai XAC NHAN."
+        )
         return True
+
+    CARD_CONFIRMATIONS.pop(chat_id, None)
 
     try:
         checked = await asyncio.to_thread(
