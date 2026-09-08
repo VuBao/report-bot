@@ -114,7 +114,7 @@ Bot sẽ tự động:
 
 Chỉ bật OCR sau khi đã xác nhận Telegram bot hoạt động bình thường bằng cách đặt `RESIDENCE_CARD_ENABLED=true` trong môi trường production. Mặc định OCR tắt để test luồng bot cơ bản.
 
-Gửi **01 ảnh mặt trước thẻ**. Mặt sau là tùy chọn và có thể gửi cùng album. Bạn có thể đặt payload ở caption **hoặc** gửi nó bằng tin nhắn ngay sau ảnh (trong 5 phút). Payload phải có ba dòng đầu và nội dung báo cáo từ dòng thứ tư:
+Gửi **01 ảnh mặt trước thẻ**. Mặt sau là tùy chọn và có thể gửi cùng album. Bạn có thể đặt payload ở caption **hoặc** gửi nó bằng tin nhắn ngay sau ảnh (trong 5 phút). Payload bắt đầu bằng ba dòng không trống gồm công ty, họ tên và chi nhánh; bot tự nhận diện nên ba dòng này có thể đổi thứ tự. Nội dung báo cáo đặt sau ba dòng thông tin:
 
 ```text
 株式会社アスラポート
@@ -124,7 +124,17 @@ NGUYEN DINH QUOC KHANH
 [nội dung báo cáo]
 ```
 
-Bot đọc các trường cần thiết trên thẻ, đối chiếu họ tên với dòng hai, rồi gửi preview. Chỉ sau tin nhắn `XAC NHAN` từ chính người gửi ảnh, bot mới ghi form: `B2`, ngày tạo tại `E2`, `B3`, `B4`, `B5`, `E5`, và báo cáo dịch tại `B31`, `B33`. Chỉ vùng ngày sửa `E2:F2` và hai vùng báo cáo `B31:F31`, `B33:F33` được tô màu hoàn tất; các trường thẻ và màu tab giữ nguyên format của template. Nếu chưa có file của công ty, bot copy file `COPY` vào Drive folder để tạo form mới. Gửi `HUY` để bỏ yêu cầu. Ảnh thẻ không được lưu sau khi đọc.
+Ví dụ thứ tự `công ty → chi nhánh → họ tên` cũng được chấp nhận:
+
+```text
+ジーアールインベストメント株式会社
+麺亭 しま田
+NGUYEN DANG THAI
+
+[nội dung báo cáo]
+```
+
+Bot đọc các trường cần thiết trên thẻ, đối chiếu họ tên đã nhận diện trong payload, rồi gửi preview. Chỉ sau tin nhắn `XAC NHAN` từ chính người gửi ảnh, bot mới ghi form: `B2`, ngày tạo tại `E2`, `B3`, `B4`, `B5`, `E5`, và báo cáo dịch tại `B31`, `B33`. Chỉ vùng ngày sửa `E2:F2` và hai vùng báo cáo `B31:F31`, `B33:F33` được tô màu hoàn tất; các trường thẻ và màu tab giữ nguyên format của template. Nếu chưa có file của công ty, bot copy file `COPY` vào Drive folder để tạo form mới. Gửi `HUY` để bỏ yêu cầu. Ảnh thẻ không được lưu sau khi đọc.
 
 Để tạo form mới được, service account phải có quyền **Editor** cho cả Drive folder đích và file `COPY`.
 

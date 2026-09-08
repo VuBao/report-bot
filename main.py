@@ -21,6 +21,11 @@ from services.residence_card_service import (
     validate_card,
     write_residence_card_form,
 )
+from utils.retry import (
+    call_with_retry,
+    exception_http_status,
+    is_transient_external_error,
+)
 
 # systemd may provide stale Environment values. The deployment workflow writes
 # the current secrets to this project-level .env, so it must be authoritative.
@@ -36,6 +41,44 @@ PENDING_CARD_IMAGES = {}
 CARD_ALBUM_WAIT_SECONDS = 2
 CARD_CONFIRMATION_TTL_SECONDS = 15 * 60
 CARD_IMAGE_TTL_SECONDS = 5 * 60
+PREPARE_MAX_ATTEMPTS = 3
+PREPARE_RETRY_DELAYS_SECONDS = (1, 2)
+
+
+async def _run_prepare_call(operation, function, *args):
+    """Run a blocking preparation step, retrying temporary provider failures."""
+    return await asyncio.to_thread(
+        call_with_retry,
+        function,
+        *args,
+        attempts=PREPARE_MAX_ATTEMPTS,
+        delays=PREPARE_RETRY_DELAYS_SECONDS,
+        operation=operation,
+        logger=logger,
+    )
+
+
+async def _run_async_prepare_call(operation, function, *args):
+    """Async counterpart used for Telegram file downloads."""
+    for attempt in range(1, PREPARE_MAX_ATTEMPTS + 1):
+        try:
+            return await function(*args)
+        except Exception as exc:
+            if not is_transient_external_error(exc) or attempt == PREPARE_MAX_ATTEMPTS:
+                raise
+            delay = PREPARE_RETRY_DELAYS_SECONDS[
+                min(attempt - 1, len(PREPARE_RETRY_DELAYS_SECONDS) - 1)
+            ]
+            logger.warning(
+                "[%s] Temporary failure (%s, HTTP %s); retry %s/%s in %ss",
+                operation,
+                exc.__class__.__name__,
+                exception_http_status(exc) or "unknown",
+                attempt + 1,
+                PREPARE_MAX_ATTEMPTS,
+                delay,
+            )
+            await asyncio.sleep(delay)
 
 
 def _residence_card_enabled():
@@ -52,7 +95,8 @@ FORMAT_HINT = (
 )
 
 CARD_FORMAT_HINT = (
-    "Gui anh mat truoc the ngoai kieu (anh mat sau la tuy chon), kem caption theo mau:\n\n"
+    "Gui anh mat truoc the ngoai kieu (anh mat sau la tuy chon), kem caption gom "
+    "cong ty, ho ten va chi nhanh (thu tu ba dong khong bat buoc):\n\n"
     "株式会社アスラポート\n"
     "NGUYEN DINH QUOC KHANH\n"
     "藤平ラ−メン大阪店\n\n"
@@ -60,21 +104,76 @@ CARD_FORMAT_HINT = (
 )
 
 
+_COMPANY_MARKERS_RE = re.compile(
+    r"(?:株式会社|有限会社|合同会社|合資会社|合名会社|一般社団法人|一般財団法人|"
+    r"社会福祉法人|医療法人|学校法人|宗教法人|NPO法人|\b(?:CO(?:MPANY)?|CORP(?:ORATION)?|"
+    r"INC(?:ORPORATED)?|LTD)\b|C[ÔO]NG\s*TY)",
+    re.IGNORECASE,
+)
+_BRANCH_MARKERS_RE = re.compile(
+    r"(?:(?:支店|本店|店舗|営業所|事業所|工場|センター|店)$|"
+    r"ホテル|レストラン|ラーメン|食堂|居酒屋|カフェ|麺亭|"
+    r"\b(?:STORE|BRANCH|RESTAURANT|HOTEL|FACTORY|OFFICE)\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_card_employee_name(line):
+    """Recognise a standalone, uppercase Latin-alphabet employee name."""
+    normalized = " ".join(line.split())
+    return (
+        not _COMPANY_MARKERS_RE.search(normalized)
+        and not _BRANCH_MARKERS_RE.search(normalized)
+        and bool(re.fullmatch(r"[A-Z][A-Z .'-]*(?:\s+[A-Z][A-Z .'-]*)+", normalized))
+    )
+
+
+def _classify_card_header(header_lines):
+    """Return company, employee and branch regardless of their line order."""
+    employee_indexes = [
+        index for index, line in enumerate(header_lines) if _is_card_employee_name(line)
+    ]
+    if len(employee_indexes) != 1:
+        raise ValueError("Khong the xac dinh duy nhat ho ten ung vien trong ba dong dau")
+
+    employee_index = employee_indexes[0]
+    business_indexes = [index for index in range(3) if index != employee_index]
+
+    def company_likelihood(index):
+        line = header_lines[index]
+        return (
+            2 * bool(_COMPANY_MARKERS_RE.search(line))
+            - 2 * bool(_BRANCH_MARKERS_RE.search(line))
+        )
+
+    # Legal-entity words and branch/store suffixes disambiguate reversed
+    # headers. If neither line has a useful marker, retain the legacy rule:
+    # the first non-name line is the company.
+    company_index = max(business_indexes, key=lambda index: (company_likelihood(index), -index))
+    branch_index = next(index for index in business_indexes if index != company_index)
+    return {
+        "company_name": header_lines[company_index],
+        "employee_name": header_lines[employee_index],
+        "branch_name": header_lines[branch_index],
+    }
+
+
 def _parse_card_payload(text):
     lines = [line.strip() for line in (text or "").splitlines()]
-    while lines and not lines[0]:
-        lines.pop(0)
-    if len(lines) < 4 or not all(lines[:3]):
+    header = []
+    last_header_index = None
+    for index, line in enumerate(lines):
+        if line:
+            header.append(" ".join(line.split()))
+            if len(header) == 3:
+                last_header_index = index
+                break
+    if len(header) != 3:
         raise ValueError("Thieu cong ty, ho ten, chi nhanh hoac noi dung bao cao")
-    report_text = "\n".join(lines[3:]).strip()
+    report_text = "\n".join(lines[last_header_index + 1:]).strip()
     if not report_text:
         raise ValueError("Thieu noi dung bao cao")
-    return {
-        "company_name": lines[0],
-        "employee_name": lines[1],
-        "branch_name": lines[2],
-        "report_text": report_text,
-    }
+    return {**_classify_card_header(header), "report_text": report_text}
 
 
 def _card_preview_text(payload, card_values, company_form_will_be_created):
@@ -154,14 +253,18 @@ async def _try_process_pending_card_images(message, bot):
 async def _prepare_card_submission(message, file_ids, caption, bot):
     try:
         payload = _parse_card_payload(caption)
-        images = await _download_card_images(bot, file_ids)
-        extracted = await asyncio.to_thread(extract_residence_card, images)
+        images = await _run_async_prepare_call(
+            "TELEGRAM IMAGE DOWNLOAD", _download_card_images, bot, file_ids
+        )
+        extracted = await _run_prepare_call("CARD OCR", extract_residence_card, images)
         # Image data is deliberately discarded after extraction and never kept in state/logs.
         card_values = validate_card(extracted, payload["employee_name"])
-        spreadsheet_id, file_name = await asyncio.to_thread(
+        spreadsheet_id, file_name = await _run_prepare_call(
+            "DRIVE LOOKUP",
             find_spreadsheet_id_strict, payload["company_name"]
         )
-        report = await asyncio.to_thread(
+        report = await _run_prepare_call(
+            "REPORT GENERATION",
             generate_report,
             payload["report_text"],
             card_values["full_name"],
@@ -288,6 +391,9 @@ async def _handle_card_confirmation(message):
         )
     except Exception as exc:
         logger.exception("[CARD WRITE ERROR] %s", exc)
+        # A long provider retry must not make the retained confirmation expire
+        # immediately after we tell the sender to try again.
+        pending["expires_at"] = time.monotonic() + CARD_CONFIRMATION_TTL_SECONDS
         await message.reply_text(
             "Google Sheets tam thoi khong san sang de ghi form. Du lieu xac nhan "
             "van duoc giu lai; vui long doi it phut va gui lai XAC NHAN."

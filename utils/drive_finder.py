@@ -131,17 +131,27 @@ def find_spreadsheet_id_strict(company_name):
 
 def find_or_create_company_spreadsheet(company_name):
     """Return the exact company workbook, copying COPY into the Drive folder if absent."""
+    # Always reconcile against Drive immediately before a non-idempotent copy.
+    # A previous copy request may have reached Google even if its response
+    # timed out, while the process-level listing cache still says it is absent.
+    clear_cache()
     spreadsheet_id, file_name = find_spreadsheet_id_strict(company_name)
     if spreadsheet_id:
         return spreadsheet_id, file_name, False
 
     service = _get_drive_service()
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", DEFAULT_FOLDER_ID)
-    copied = service.files().copy(
-        fileId=COPY_TEMPLATE_SPREADSHEET_ID,
-        body={"name": company_name, "parents": [folder_id]},
-        fields="id,name",
-    ).execute()
+    try:
+        copied = service.files().copy(
+            fileId=COPY_TEMPLATE_SPREADSHEET_ID,
+            body={"name": company_name, "parents": [folder_id]},
+            fields="id,name",
+        ).execute()
+    except Exception:
+        # Force the next XAC NHAN to discover a copy that Google may have
+        # completed despite a lost/timed-out response.
+        clear_cache()
+        raise
     clear_cache()
     logger.info("[DRIVE COPY] Created company workbook from COPY template")
     return copied["id"], copied["name"], True

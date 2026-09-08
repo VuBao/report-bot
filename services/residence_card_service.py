@@ -26,6 +26,7 @@ from config.sheet_config import (
     FORM_TEMPLATE,
     FORM_VISA_EXPIRY_CELL,
 )
+from utils.retry import exception_http_status, is_transient_external_error
 
 logger = logging.getLogger(__name__)
 
@@ -79,19 +80,11 @@ def _get_client():
 
 def _google_error_status(exc):
     """Extract an HTTP status from gspread/google API exceptions when present."""
-    response = getattr(exc, "response", None)
-    status = getattr(response, "status_code", None) or getattr(response, "status", None)
-    if status:
-        return int(status)
-    for arg in getattr(exc, "args", ()):
-        if isinstance(arg, dict) and arg.get("code"):
-            return int(arg["code"])
-    return None
+    return exception_http_status(exc)
 
 
 def _is_transient_google_error(exc):
-    status = _google_error_status(exc)
-    return status == 429 or (status is not None and 500 <= status < 600)
+    return is_transient_external_error(exc)
 
 
 def normalize_name(value):
@@ -151,7 +144,7 @@ def validate_card(card, submitted_name):
 
     full_name = _required_value(card, "full_name")
     if normalize_name(full_name) != normalize_name(submitted_name):
-        raise ValueError("Ho ten dong 2 khong khop chinh xac voi ho ten doc tren the")
+        raise ValueError("Ho ten trong payload khong khop chinh xac voi ho ten doc tren the")
 
     dob = _parse_japanese_date(_required_value(card, "date_of_birth"), "Ngay sinh")
     visa_expiry = _parse_japanese_date(_required_value(card, "visa_expiry"), "Han visa")
@@ -396,6 +389,6 @@ def write_residence_card_form(
             delay = GOOGLE_WRITE_RETRY_DELAYS_SECONDS[attempt - 1]
             logger.warning(
                 "[RESIDENCE CARD] Google API returned %s; retry %s/%s in %ss",
-                _google_error_status(exc), attempt, GOOGLE_WRITE_MAX_ATTEMPTS, delay,
+                _google_error_status(exc), attempt + 1, GOOGLE_WRITE_MAX_ATTEMPTS, delay,
             )
             time.sleep(delay)
