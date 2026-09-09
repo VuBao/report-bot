@@ -24,8 +24,8 @@ Gửi ảnh **mặt trước** thẻ ngoại kiều kèm caption theo đúng m�
 
 ```text
 株式会社アスラポート
-NGUYEN DINH QUOC KHANH
 藤平ラ−メン大阪店
+NGUYEN DINH QUOC KHANH
 
 [nội dung báo cáo để dịch]
 ```
@@ -35,11 +35,11 @@ Quy ước bắt buộc:
 | Dòng | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
 | 1 | Tên công ty | `株式会社アスラポート` |
-| 2 | Họ tên ứng viên | `NGUYEN DINH QUOC KHANH` |
-| 3 | Tên chi nhánh | `藤平ラ−メン大阪店` |
+| 2 | Tên chi nhánh | `藤平ラ−メン大阪店` |
+| 3 | Họ tên ứng viên | `NGUYEN DINH QUOC KHANH` |
 | 4 trở đi | Nội dung báo cáo cần dịch | ghi chú phỏng vấn |
 
-Tên công ty dùng để chọn file trong Google Drive folder hiện hữu. Bot ưu tiên khớp chính xác sau chuẩn hóa, sau đó chấp nhận một file có tên gần đúng duy nhất (khác khoảng trắng, dấu câu hoặc hậu tố chi nhánh). Nếu có nhiều file gần đúng ngang nhau thì dừng, không ghi. Tên ứng viên từ dòng 2 vẫn phải khớp **chính xác sau chuẩn hóa** với tên `氏名 / NAME` đọc từ thẻ; không khớp thì dừng, không ghi. Tên chi nhánh được giữ nguyên văn.
+Tên công ty dùng để chọn file trong Google Drive folder hiện hữu. Bot ưu tiên khớp chính xác sau chuẩn hóa, sau đó chấp nhận một file có tên gần đúng duy nhất (khác khoảng trắng, dấu câu hoặc hậu tố chi nhánh). Nếu có nhiều file gần đúng ngang nhau thì dừng, không ghi. Tên ứng viên từ dòng 3 vẫn phải khớp **chính xác sau chuẩn hóa** với tên `氏名 / NAME` đọc từ thẻ; không khớp thì dừng, không ghi. Tên chi nhánh được giữ nguyên văn.
 
 ## Luồng xử lý
 

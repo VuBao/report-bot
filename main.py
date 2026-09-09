@@ -96,10 +96,10 @@ FORMAT_HINT = (
 
 CARD_FORMAT_HINT = (
     "Gui anh mat truoc the ngoai kieu (anh mat sau la tuy chon), kem caption gom "
-    "ba dong theo dung thu tu: cong ty, ho ten, chi nhanh:\n\n"
+    "ba dong theo dung thu tu: cong ty, chi nhanh, ho ten:\n\n"
     "株式会社アスラポート\n"
-    "NGUYEN DINH QUOC KHANH\n"
-    "藤平ラ−メン大阪店\n\n"
+    "藤平ラ−メン大阪店\n"
+    "NGUYEN DINH QUOC KHANH\n\n"
     "[noi dung bao cao]"
 )
 
@@ -130,9 +130,9 @@ def _is_card_employee_name(line):
 
 def _classify_card_header(header_lines):
     """Return the three required header fields in their fixed input order."""
-    company_name, employee_name, branch_name = header_lines
+    company_name, branch_name, employee_name = header_lines
     if not _is_card_employee_name(employee_name):
-        raise ValueError("Dong thu hai phai la ho ten ung vien viet IN HOA")
+        raise ValueError("Dong thu ba phai la ho ten ung vien viet IN HOA")
 
     return {
         "company_name": company_name,

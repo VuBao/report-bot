@@ -114,12 +114,12 @@ Bot sẽ tự động:
 
 Chỉ bật OCR sau khi đã xác nhận Telegram bot hoạt động bình thường bằng cách đặt `RESIDENCE_CARD_ENABLED=true` trong môi trường production. Mặc định OCR tắt để test luồng bot cơ bản.
 
-Gửi **01 ảnh mặt trước thẻ**. Mặt sau là tùy chọn và có thể gửi cùng album. Bạn có thể đặt payload ở caption **hoặc** gửi nó bằng tin nhắn ngay sau ảnh (trong 5 phút). Payload bắt đầu bằng ba dòng không trống theo đúng thứ tự: tên công ty, họ tên user, tên chi nhánh. Nội dung báo cáo đặt sau ba dòng thông tin:
+Gửi **01 ảnh mặt trước thẻ**. Mặt sau là tùy chọn và có thể gửi cùng album. Bạn có thể đặt payload ở caption **hoặc** gửi nó bằng tin nhắn ngay sau ảnh (trong 5 phút). Payload bắt đầu bằng ba dòng không trống theo đúng thứ tự: tên công ty, tên chi nhánh, họ tên user. Nội dung báo cáo đặt sau ba dòng thông tin:
 
 ```text
 株式会社アスラポート
-NGUYEN DINH QUOC KHANH
 藤平ラ−メン大阪店
+NGUYEN DINH QUOC KHANH
 
 [nội dung báo cáo]
 ```

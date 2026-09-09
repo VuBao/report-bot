@@ -1,6 +1,8 @@
 # utils/drive_finder.py
 import difflib
-import os, logging, re
+import logging
+import os
+import re
 from google.oauth2.service_account import Credentials
 from config.sheet_config import COPY_TEMPLATE_SPREADSHEET_ID
 
@@ -11,6 +13,8 @@ SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/a
 DEFAULT_FOLDER_ID = "18YPY8be9mS0uHA5K2csUv5_cOb2RO6hC"
 _cache = {}
 _files_cache = None
+_SPREADSHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 def _get_drive_service():
     try:
@@ -20,28 +24,61 @@ def _get_drive_service():
     creds = Credentials.from_service_account_file(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON","./config/service_account.json"),scopes=SCOPES)
     return build("drive","v3",credentials=creds)
 
+def _list_supported_children(service, folder_id):
+    """List spreadsheet and folder children of one Drive folder."""
+    children = []
+    page_token = None
+    while True:
+        results = service.files().list(
+            q=(
+                f"'{folder_id}' in parents and trashed=false and "
+                f"(mimeType='{_SPREADSHEET_MIME_TYPE}' or "
+                f"mimeType='{_FOLDER_MIME_TYPE}')"
+            ),
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageSize=1000,
+            pageToken=page_token,
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+        ).execute()
+        children.extend(results.get("files", []))
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            return children
+
+
 def _get_all_files():
+    """Return every company spreadsheet below the configured Drive folder."""
     global _files_cache
     if _files_cache is not None:
         return _files_cache
     try:
         service = _get_drive_service()
-        folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", DEFAULT_FOLDER_ID)
+        root_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", DEFAULT_FOLDER_ID)
         files = []
-        page_token = None
-        while True:
-            results = service.files().list(
-                q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
-                fields="nextPageToken, files(id, name)",
-                pageSize=1000,
-                pageToken=page_token,
-            ).execute()
-            files.extend(results.get("files",[]))
-            page_token = results.get("nextPageToken")
-            if not page_token:
-                break
+        pending_folder_ids = [root_folder_id]
+        visited_folder_ids = set()
+        seen_file_ids = set()
+
+        while pending_folder_ids:
+            folder_id = pending_folder_ids.pop()
+            if folder_id in visited_folder_ids:
+                continue
+            visited_folder_ids.add(folder_id)
+
+            for child in _list_supported_children(service, folder_id):
+                if child.get("mimeType") == _FOLDER_MIME_TYPE:
+                    pending_folder_ids.append(child["id"])
+                elif child["id"] not in seen_file_ids:
+                    seen_file_ids.add(child["id"])
+                    files.append({"id": child["id"], "name": child["name"]})
+
         _files_cache = files
-        logger.info(f"[DRIVE] Loaded {len(_files_cache)} files")
+        logger.info(
+            "[DRIVE] Loaded %s files from %s folders",
+            len(_files_cache),
+            len(visited_folder_ids),
+        )
         return _files_cache
     except Exception as e:
         logger.exception(f"[DRIVE ERROR] {e}")
