@@ -96,7 +96,7 @@ FORMAT_HINT = (
 
 CARD_FORMAT_HINT = (
     "Gui anh mat truoc the ngoai kieu (anh mat sau la tuy chon), kem caption gom "
-    "cong ty, ho ten va chi nhanh (thu tu ba dong khong bat buoc):\n\n"
+    "ba dong theo dung thu tu: cong ty, ho ten, chi nhanh:\n\n"
     "株式会社アスラポート\n"
     "NGUYEN DINH QUOC KHANH\n"
     "藤平ラ−メン大阪店\n\n"
@@ -129,32 +129,15 @@ def _is_card_employee_name(line):
 
 
 def _classify_card_header(header_lines):
-    """Return company, employee and branch regardless of their line order."""
-    employee_indexes = [
-        index for index, line in enumerate(header_lines) if _is_card_employee_name(line)
-    ]
-    if len(employee_indexes) != 1:
-        raise ValueError("Khong the xac dinh duy nhat ho ten ung vien trong ba dong dau")
+    """Return the three required header fields in their fixed input order."""
+    company_name, employee_name, branch_name = header_lines
+    if not _is_card_employee_name(employee_name):
+        raise ValueError("Dong thu hai phai la ho ten ung vien viet IN HOA")
 
-    employee_index = employee_indexes[0]
-    business_indexes = [index for index in range(3) if index != employee_index]
-
-    def company_likelihood(index):
-        line = header_lines[index]
-        return (
-            2 * bool(_COMPANY_MARKERS_RE.search(line))
-            - 2 * bool(_BRANCH_MARKERS_RE.search(line))
-        )
-
-    # Legal-entity words and branch/store suffixes disambiguate reversed
-    # headers. If neither line has a useful marker, retain the legacy rule:
-    # the first non-name line is the company.
-    company_index = max(business_indexes, key=lambda index: (company_likelihood(index), -index))
-    branch_index = next(index for index in business_indexes if index != company_index)
     return {
-        "company_name": header_lines[company_index],
-        "employee_name": header_lines[employee_index],
-        "branch_name": header_lines[branch_index],
+        "company_name": company_name,
+        "employee_name": employee_name,
+        "branch_name": branch_name,
     }
 
 
