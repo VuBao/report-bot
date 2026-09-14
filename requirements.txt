@@ -6,3 +6,4 @@ google-auth==2.28.0
 google-api-python-client==1.7.12
 google-auth-oauthlib==1.2.0
 python-dotenv==1.0.1
+Pillow==10.2.0

@@ -96,7 +96,7 @@ Trước khi bật cho dữ liệu production, cần chạy chế độ **dry-ru
 ## Thiết kế kỹ thuật dự kiến
 
 - Mở rộng Telegram handler để nhận một `PHOTO` mặt trước hoặc album tối đa hai ảnh; caption phải đi kèm ảnh/album.
-- Tạo `services/residence_card_service.py`: tải ảnh Telegram vào bộ nhớ tạm, gọi model hỗ trợ vision với prompt JSON schema, kiểm tra dữ liệu và xóa file tạm ở cả nhánh thành công/lỗi.
+- Tạo `services/residence_card_service.py`: tải ảnh Telegram vào bộ nhớ tạm; lượt đầu đọc toàn bộ thẻ và trả thêm cờ `address_review_required`; chỉ chạy lượt hai khi địa chỉ thiếu, confidence thấp, dữ liệu mặt sau chưa đầy đủ hoặc model còn nghi vấn. Lượt hai chỉ đọc vùng địa chỉ được crop theo mặt thẻ, phóng lớn 3 lần và tăng tương phản/độ nét; kết quả crop thay thế phần địa chỉ còn nghi vấn và phải đạt ngưỡng confidence; xóa ảnh tạm ở cả nhánh thành công/lỗi.
 - Tạo `services/residence_card_service.py`: xác định/tạo tab ứng viên từ template `FORMAT`, kiểm tra cấu trúc form, tạo preview, batch-update `B2/B3/B4/B5/E5/B31/B33` và read-back verification.
 - Tạo trạng thái tác vụ tạm theo `chat_id` + `message_id`, tự hết hạn sau 15 phút nếu không nhận `XAC NHAN`; không lưu ảnh hoặc dữ liệu trích xuất lâu hơn phiên này.
 - Thêm audit tối thiểu không chứa PII: thời điểm, `chat_id`, ID file, tab đã chọn, kết quả `preview/confirmed/failed`, mã lỗi. Không log ảnh, OCR raw response, số thẻ hay các giá trị năm trường.

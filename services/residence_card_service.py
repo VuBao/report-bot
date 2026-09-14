@@ -1,6 +1,7 @@
 """Extraction and safe form updates for Japanese residence-card submissions."""
 
 import base64
+import io
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from datetime import date, datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from config.sheet_config import (
     COLOR_CELL_DONE,
@@ -34,13 +36,18 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-# The sender reviews every extracted value and must explicitly confirm before
-# writing.  A 0.98 threshold was unnecessarily strict for otherwise legible
-# residence-card addresses, causing needless resubmissions.
+# Every stored field must clear this threshold. An uncertain address in the
+# full-card pass is re-read from an enlarged crop before validation. The
+# sender's confirmation remains an additional safeguard, not a replacement
+# for OCR confidence validation.
 MIN_CONFIDENCE = 0.80
 GOOGLE_WRITE_MAX_ATTEMPTS = 5
 GOOGLE_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 _DATE_RE = re.compile(r"^(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日$")
+_CARD_ASPECT_RATIO = 85.60 / 53.98
+_FRONT_ADDRESS_CROP = (0.02, 0.29, 0.79, 0.58)
+_BACK_ADDRESS_CROP = (0.02, 0.02, 0.98, 0.53)
+_ADDRESS_CROP_SCALE = 3
 
 VISION_PROMPT = """
 You extract only visual facts from one front image, or optional front and back
@@ -52,6 +59,9 @@ Required schema:
   "document_type": "residence_card" | "unknown",
   "front_detected": boolean,
   "back_detected": boolean,
+  "address_review_required": boolean,
+  "front_image_index": integer | null,
+  "back_image_index": integer | null,
   "full_name": {"value": string, "confidence": number},
   "date_of_birth": {"value": "YYYY年MM月DD日" | "", "confidence": number},
   "front_address": {"value": string, "confidence": number},
@@ -66,7 +76,36 @@ visa_expiry comes only from 在留期間満了日/THE EXPIRY DATE OF THE PERIOD 
 do not use the card-validity date. front_address comes only from 住居地/ADDRESS on the front.
 For the optional back, list only clearly handwritten/printed entries in 住居地記載欄.
 If no back or no entry, return an empty list. confidence must reflect legibility;
-do not use a high value for guesses.
+do not use a high value for guesses. Image indexes are zero-based positions in
+the supplied image list. front_image_index is required when front_detected is
+true. back_image_index is required only when back_detected is true.
+Set address_review_required to true if any character, digit, hyphen, apartment
+number, building name, reported date, or the presence of a back-side address
+entry is uncertain. Otherwise set it to false. Never hide uncertainty behind
+a completed or plausible-looking address.
+"""
+
+VISION_VERIFY_PROMPT = """
+You are the independent second-pass verifier for residence-card addresses.
+You receive only enlarged crops of address regions, each preceded by a label
+identifying FRONT or BACK. Return JSON only using exactly the schema below.
+Transcribe the address text directly from these crops. Check every character,
+digit, hyphen, apartment number, and Japanese building-name character. Never
+complete a word or address from what seems common or plausible. If any
+character is unclear, return an empty value or lower confidence instead of
+guessing.
+
+Required schema:
+{
+  "front_address": {"value": string, "confidence": number},
+  "back_address_entries": [
+    {"reported_date": "YYYY年MM月DD日" | "", "address": string, "confidence": number}
+  ]
+}
+
+front_address comes only from 住居地/ADDRESS in the FRONT crop. For the BACK
+crop, list only entries in 住居地記載欄. If there is no BACK crop or no address
+entry, return an empty list. Do not return labels, seals, or unrelated text.
 """
 
 
@@ -96,25 +135,243 @@ def _normalize_text(value):
     return " ".join((value or "").strip().split())
 
 
+def _normalize_ocr_text(value):
+    return unicodedata.normalize("NFKC", _normalize_text(value))
+
+
 def _value(field):
     if not isinstance(field, dict):
         return "", 0.0
     value = _normalize_text(str(field.get("value", "")))
+    return value, _confidence(field.get("confidence", 0))
+
+
+def _confidence(value):
     try:
-        confidence = float(field.get("confidence", 0))
+        return float(value)
     except (TypeError, ValueError):
-        confidence = 0.0
-    return value, confidence
+        return 0.0
 
 
 def _required_value(card, field):
     value, confidence = _value(card.get(field))
-    # An address is always displayed in the preview and requires the sender's
-    # explicit confirmation before it is stored.  Do not force a new photo
-    # merely because the vision model assigned a conservative confidence score.
-    if not value or (field != "front_address" and confidence < MIN_CONFIDENCE):
+    if not value or confidence < MIN_CONFIDENCE:
         raise ValueError(f"Khong the doc chac chan truong {field}; vui long chup lai the ro hon")
     return value
+
+
+def _canonical_back_entries(card):
+    entries = card.get("back_address_entries", [])
+    if not isinstance(entries, list):
+        raise ValueError("Du lieu dia chi mat sau khong hop le")
+
+    canonical = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Du lieu dia chi mat sau khong hop le")
+        canonical.append((
+            _normalize_ocr_text(str(entry.get("reported_date", ""))),
+            _normalize_ocr_text(str(entry.get("address", ""))),
+        ))
+    if len(canonical) != len(set(canonical)):
+        raise ValueError("Du lieu dia chi mat sau bi trung lap")
+    return sorted(canonical)
+
+
+def _center_crop_card(image):
+    """Crop surrounding photo margins to the centered ISO ID-1 card shape."""
+    width, height = image.size
+    current_ratio = width / height
+    if current_ratio > _CARD_ASPECT_RATIO:
+        card_width = round(height * _CARD_ASPECT_RATIO)
+        left = (width - card_width) // 2
+        return image.crop((left, 0, left + card_width, height))
+    card_height = round(width / _CARD_ASPECT_RATIO)
+    top = (height - card_height) // 2
+    return image.crop((0, top, width, top + card_height))
+
+
+def _crop_address_region(image_bytes, normalized_box):
+    """Return an enlarged, contrast-enhanced JPEG crop of an address region."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            image = ImageOps.exif_transpose(source).convert("RGB")
+    except Exception as exc:
+        raise ValueError("Khong the xu ly anh the de kiem tra dia chi") from exc
+
+    card = _center_crop_card(image)
+    width, height = card.size
+    left, top, right, bottom = normalized_box
+    crop = card.crop((
+        round(width * left),
+        round(height * top),
+        round(width * right),
+        round(height * bottom),
+    ))
+    crop = crop.resize(
+        (crop.width * _ADDRESS_CROP_SCALE, crop.height * _ADDRESS_CROP_SCALE),
+        Image.Resampling.LANCZOS,
+    )
+    crop = ImageOps.autocontrast(crop, cutoff=1)
+    crop = ImageEnhance.Sharpness(crop).enhance(1.5)
+    crop = crop.filter(ImageFilter.UnsharpMask(radius=1.2, percent=125, threshold=2))
+    output = io.BytesIO()
+    crop.save(output, format="JPEG", quality=95, optimize=True)
+    return output.getvalue()
+
+
+def _resolve_image_indexes(card, image_count):
+    if not isinstance(card, dict):
+        raise ValueError("AI khong tra ve du lieu the hop le")
+
+    front_index = card.get("front_image_index")
+    if front_index is None and image_count == 1 and card.get("front_detected") is True:
+        front_index = 0
+    if isinstance(front_index, bool) or not isinstance(front_index, int):
+        raise ValueError("Khong the xac dinh anh mat truoc de crop dia chi")
+    if not 0 <= front_index < image_count:
+        raise ValueError("Chi so anh mat truoc khong hop le")
+
+    back_index = card.get("back_image_index")
+    if image_count == 2 and card.get("back_detected") is not True:
+        # Always inspect the other supplied image as a possible back. If the
+        # first pass missed a handwritten address there, the crop pass will
+        # disagree and safely stop the submission.
+        back_index = 1 - front_index
+    elif card.get("back_detected") is True:
+        if back_index is None and image_count == 2:
+            back_index = 1 - front_index
+        if isinstance(back_index, bool) or not isinstance(back_index, int):
+            raise ValueError("Khong the xac dinh anh mat sau de crop dia chi")
+        if not 0 <= back_index < image_count or back_index == front_index:
+            raise ValueError("Chi so anh mat sau khong hop le")
+    else:
+        back_index = None
+    return front_index, back_index
+
+
+def _build_address_crop_content(image_bytes_list, first):
+    front_index, back_index = _resolve_image_indexes(first, len(image_bytes_list))
+    crops = [("FRONT ADDRESS CROP", front_index, _FRONT_ADDRESS_CROP)]
+    if back_index is not None:
+        crops.append(("BACK ADDRESS CROP", back_index, _BACK_ADDRESS_CROP))
+
+    content = []
+    for label, image_index, crop_box in crops:
+        crop_bytes = _crop_address_region(image_bytes_list[image_index], crop_box)
+        encoded = base64.b64encode(crop_bytes).decode("ascii")
+        content.extend([
+            {"type": "text", "text": label},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
+            },
+        ])
+    return content
+
+
+def _back_entries_need_recheck(card):
+    entries = card.get("back_address_entries", [])
+    if not isinstance(entries, list):
+        return True
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return True
+        if (
+            not _normalize_text(str(entry.get("reported_date", "")))
+            or not _normalize_text(str(entry.get("address", "")))
+            or _confidence(entry.get("confidence", 0)) < MIN_CONFIDENCE
+        ):
+            return True
+    return False
+
+
+def _address_needs_recheck(card):
+    """Return whether the full-card result leaves any address uncertainty."""
+    if not isinstance(card, dict):
+        return True
+    if card.get("address_review_required") is True:
+        return True
+    address, confidence = _value(card.get("front_address"))
+    return not address or confidence < MIN_CONFIDENCE or _back_entries_need_recheck(card)
+
+
+def _merge_address_recheck(first, address_check):
+    """Use crop OCR to resolve uncertainty, while rejecting confident conflicts."""
+    if not isinstance(first, dict) or not isinstance(address_check, dict):
+        raise ValueError("AI khong tra ve du lieu dia chi hop le o ca hai lan doc")
+
+    first_address, first_confidence = _value(first.get("front_address"))
+    checked_address, checked_confidence = _value(address_check.get("front_address"))
+    review_requested = first.get("address_review_required") is True
+    first_front_reliable = (
+        bool(first_address)
+        and first_confidence >= MIN_CONFIDENCE
+        and not review_requested
+    )
+    if (
+        first_front_reliable
+        and _normalize_ocr_text(first_address) != _normalize_ocr_text(checked_address)
+    ):
+        raise ValueError(
+            "Hai lan doc the khong khop truong dia chi mat truoc; vui long chup lai the ro hon"
+        )
+
+    verified = dict(first)
+    if first_front_reliable:
+        verified["front_address"] = {
+            "value": first_address,
+            "confidence": min(first_confidence, checked_confidence),
+        }
+    else:
+        verified["front_address"] = {
+            "value": checked_address,
+            "confidence": checked_confidence,
+        }
+
+    if review_requested or _back_entries_need_recheck(first):
+        checked_entries = address_check.get("back_address_entries", [])
+        if not isinstance(checked_entries, list):
+            raise ValueError("Du lieu dia chi mat sau khong hop le")
+        verified["back_address_entries"] = [
+            {
+                "reported_date": _normalize_text(str(entry.get("reported_date", ""))),
+                "address": _normalize_text(str(entry.get("address", ""))),
+                "confidence": _confidence(entry.get("confidence", 0)),
+            }
+            if isinstance(entry, dict) else entry
+            for entry in checked_entries
+        ]
+    else:
+        first_back_entries = _canonical_back_entries(first)
+        checked_back_entries = _canonical_back_entries(address_check)
+        if first_back_entries != checked_back_entries:
+            raise ValueError(
+                "Hai lan doc the khong khop dia chi mat sau; vui long chup lai the ro hon"
+            )
+        checked_back_confidence = {
+            (
+                _normalize_ocr_text(str(entry.get("reported_date", ""))),
+                _normalize_ocr_text(str(entry.get("address", ""))),
+            ): _confidence(entry.get("confidence", 0))
+            for entry in address_check.get("back_address_entries", [])
+        }
+        verified["back_address_entries"] = []
+        for entry in first.get("back_address_entries", []):
+            key = (
+                _normalize_ocr_text(str(entry.get("reported_date", ""))),
+                _normalize_ocr_text(str(entry.get("address", ""))),
+            )
+            verified["back_address_entries"].append({
+                "reported_date": _normalize_text(str(entry.get("reported_date", ""))),
+                "address": _normalize_text(str(entry.get("address", ""))),
+                "confidence": min(
+                    _confidence(entry.get("confidence", 0)),
+                    checked_back_confidence[key],
+                ),
+            })
+    verified["address_review_required"] = False
+    return verified
 
 
 def _parse_japanese_date(value, field, *, allow_past=True):
@@ -181,8 +438,31 @@ def validate_card(card, submitted_name):
     }
 
 
+def _call_vision(client, model, image_content, prompt, instruction):
+    response = client.chat.completions.create(
+        model=model,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": [
+                    *image_content,
+                    {"type": "text", "text": instruction},
+                ],
+            },
+        ],
+    )
+    raw = (response.choices[0].message.content or "").strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AI doc the khong tra ve JSON hop le") from exc
+
+
 def extract_residence_card(image_bytes_list):
-    """Call the configured vision-capable OpenAI model and return untrusted JSON."""
+    """Read the full card, re-reading enlarged address crops only if uncertain."""
     if len(image_bytes_list) not in {1, 2}:
         raise ValueError("Can 01 anh mat truoc, hoac toi da 02 anh the ngoai kieu")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -200,23 +480,31 @@ def extract_residence_card(image_bytes_list):
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
         })
-    image_content.append({"type": "text", "text": "Extract the residence-card fields using the required JSON schema."})
 
     client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=os.getenv("OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o")),
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": VISION_PROMPT},
-            {"role": "user", "content": image_content},
-        ],
+    extraction_model = os.getenv(
+        "OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o")
     )
-    raw = (response.choices[0].message.content or "").strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError("AI doc the khong tra ve JSON hop le") from exc
+    verification_model = os.getenv("OPENAI_VISION_VERIFY_MODEL", extraction_model)
+    first = _call_vision(
+        client,
+        extraction_model,
+        image_content,
+        VISION_PROMPT,
+        "Extract all permitted residence-card fields using the required JSON schema.",
+    )
+    if not _address_needs_recheck(first):
+        return first
+
+    address_crop_content = _build_address_crop_content(image_bytes_list, first)
+    address_check = _call_vision(
+        client,
+        verification_model,
+        address_crop_content,
+        VISION_VERIFY_PROMPT,
+        "Independently transcribe only the address fields from these enlarged crops.",
+    )
+    return _merge_address_recheck(first, address_check)
 
 
 def _find_worksheet_exact(spreadsheet, employee_name):
