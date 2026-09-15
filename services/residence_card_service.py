@@ -31,6 +31,7 @@ from config.sheet_config import (
 from utils.retry import exception_http_status, is_transient_external_error
 from utils.openai_compat import (
     build_chat_completion_kwargs,
+    is_gpt5_model,
     reasoning_effort_from_env,
 )
 
@@ -45,6 +46,8 @@ SCOPES = [
 # sender's confirmation remains an additional safeguard, not a replacement
 # for OCR confidence validation.
 MIN_CONFIDENCE = 0.80
+VISION_MAX_COMPLETION_TOKENS = 4000
+VISION_RECOVERY_MAX_COMPLETION_TOKENS = 6000
 GOOGLE_WRITE_MAX_ATTEMPTS = 5
 GOOGLE_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 _DATE_RE = re.compile(r"^(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日$")
@@ -590,27 +593,56 @@ def _call_vision(
     *,
     reasoning_effort,
 ):
-    response = client.chat.completions.create(**build_chat_completion_kwargs(
-        model=model,
-        max_tokens=3000,
-        temperature=0,
-        reasoning_effort=reasoning_effort,
-        messages=[
-            {"role": "system", "content": prompt},
-            {
-                "role": "user",
-                "content": [
-                    *image_content,
-                    {"type": "text", "text": instruction},
-                ],
-            },
-        ],
-    ))
-    raw = (response.choices[0].message.content or "").strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError("AI doc the khong tra ve JSON hop le") from exc
+    messages = [
+        {"role": "system", "content": prompt},
+        {
+            "role": "user",
+            "content": [
+                *image_content,
+                {"type": "text", "text": instruction},
+            ],
+        },
+    ]
+    attempts = [(reasoning_effort, VISION_MAX_COMPLETION_TOKENS)]
+    # GPT-5 can spend the whole completion budget on hidden reasoning and
+    # return empty content. Retry only that failed request with minimal
+    # reasoning, leaving the normal one/two-pass OCR policy unchanged.
+    if is_gpt5_model(model):
+        attempts.append(("minimal", VISION_RECOVERY_MAX_COMPLETION_TOKENS))
+
+    last_error = None
+    for attempt_number, (effort, token_budget) in enumerate(attempts, start=1):
+        response = client.chat.completions.create(**build_chat_completion_kwargs(
+            model=model,
+            max_tokens=token_budget,
+            temperature=0,
+            reasoning_effort=effort,
+            messages=messages,
+        ))
+        choice = response.choices[0]
+        raw = (choice.message.content or "").strip()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            usage = getattr(response, "usage", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+            details = getattr(usage, "completion_tokens_details", None)
+            reasoning_tokens = getattr(details, "reasoning_tokens", None)
+            logger.warning(
+                "[CARD OCR] Invalid JSON response; attempt=%s/%s "
+                "finish_reason=%s empty=%s completion_tokens=%s reasoning_tokens=%s",
+                attempt_number,
+                len(attempts),
+                getattr(choice, "finish_reason", None),
+                not bool(raw),
+                completion_tokens,
+                reasoning_tokens,
+            )
+
+    raise ValueError(
+        "AI doc the khong tra ve JSON hop le sau khi thu lai"
+    ) from last_error
 
 
 def extract_residence_card(image_bytes_list):
@@ -660,7 +692,7 @@ def extract_residence_card(image_bytes_list):
         VISION_VERIFY_PROMPT,
         "Independently transcribe only the address fields from these enlarged crops.",
         reasoning_effort=reasoning_effort_from_env(
-            "OPENAI_VISION_VERIFY_REASONING_EFFORT", "medium"
+            "OPENAI_VISION_VERIFY_REASONING_EFFORT", "low"
         ),
     )
     merged = _merge_address_recheck(first, address_check)

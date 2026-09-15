@@ -181,7 +181,7 @@ class ResidenceCardOcrTests(unittest.TestCase):
         sent = create.call_args.kwargs
         self.assertEqual(sent["model"], "gpt-5")
         self.assertEqual(sent["reasoning_effort"], "low")
-        self.assertEqual(sent["max_completion_tokens"], 3000)
+        self.assertEqual(sent["max_completion_tokens"], 4000)
         self.assertNotIn("temperature", sent)
 
     @patch.dict(
@@ -213,7 +213,7 @@ class ResidenceCardOcrTests(unittest.TestCase):
         second_prompt = create.call_args_list[1].kwargs["messages"][0]["content"]
         self.assertNotEqual(first_prompt, second_prompt)
         self.assertEqual(
-            create.call_args_list[1].kwargs["reasoning_effort"], "medium"
+            create.call_args_list[1].kwargs["reasoning_effort"], "low"
         )
 
         second_content = create.call_args_list[1].kwargs["messages"][1]["content"]
@@ -223,6 +223,41 @@ class ResidenceCardOcrTests(unittest.TestCase):
         with Image.open(io.BytesIO(crop_bytes)) as crop:
             self.assertGreater(crop.width, crop.height)
             self.assertGreater(crop.width, 3000)
+
+    @patch.dict(
+        "os.environ", {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-5"}
+    )
+    @patch("openai.OpenAI")
+    def test_empty_gpt5_output_retries_with_minimal_reasoning(self, openai_client):
+        uncertain = _card(address_confidence=0.60)
+        first_response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(uncertain)))]
+        )
+        empty_response = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=""),
+                finish_reason="length",
+            )],
+            usage=SimpleNamespace(
+                completion_tokens=4000,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=4000),
+            ),
+        )
+        recovered_response = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(_address_check()))
+            )]
+        )
+        create = Mock(side_effect=[first_response, empty_response, recovered_response])
+        openai_client.return_value.chat.completions.create = create
+
+        result = extract_residence_card([_jpeg_bytes()])
+
+        self.assertEqual(result["front_address"]["value"], _card()["front_address"]["value"])
+        self.assertEqual(create.call_count, 3)
+        retry = create.call_args_list[2].kwargs
+        self.assertEqual(retry["reasoning_effort"], "minimal")
+        self.assertEqual(retry["max_completion_tokens"], 6000)
 
     @patch.dict(
         "os.environ", {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-5"}

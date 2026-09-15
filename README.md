@@ -1,5 +1,9 @@
 # Report Bot — Hướng dẫn Setup
 
+Các sự cố production, nguyên nhân và checklist bắt buộc khi nâng model/SDK được
+lưu tại [CASE_STUDY.md](CASE_STUDY.md). Phải đọc tài liệu này trước mỗi lần đổi
+model hoặc cấu hình reasoning/token budget.
+
 ## Yêu cầu
 - Python 3.11+
 - Tài khoản Google Cloud (Service Account)
@@ -46,8 +50,12 @@ cp .env.example .env
 TELEGRAM_BOT_TOKEN=xxx
 AI_PROVIDER=auto
 OPENAI_API_KEY=sk-xxx
-OPENAI_MODEL=gpt-4o
-OPENAI_VISION_MODEL=gpt-4o
+OPENAI_MODEL=gpt-5
+OPENAI_REPORT_REASONING_EFFORT=medium
+OPENAI_REVIEW_REASONING_EFFORT=medium
+OPENAI_VISION_MODEL=gpt-5
+OPENAI_VISION_REASONING_EFFORT=low
+OPENAI_VISION_VERIFY_REASONING_EFFORT=low
 # Optional fallback only:
 # ANTHROPIC_API_KEY=sk-ant-xxx
 # ANTHROPIC_MODEL=claude-haiku-4-5
@@ -66,7 +74,10 @@ Nếu deploy qua GitHub Actions, đặt các giá trị sau trong GitHub reposit
 
 - `OPENAI_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
-- `OPENAI_MODEL` nếu muốn override model
+
+Workflow hiện ghim model production ở `gpt-5`; thay đổi model phải đi qua pull
+request/commit và các deployment gate trong `CASE_STUDY.md`, không đổi âm thầm
+bằng repository secret.
 
 ---
 

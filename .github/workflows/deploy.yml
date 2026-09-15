@@ -37,7 +37,7 @@ jobs:
             update_env OPENAI_REPORT_REASONING_EFFORT "medium"
             update_env OPENAI_REVIEW_REASONING_EFFORT "medium"
             update_env OPENAI_VISION_REASONING_EFFORT "low"
-            update_env OPENAI_VISION_VERIFY_REASONING_EFFORT "medium"
+            update_env OPENAI_VISION_VERIFY_REASONING_EFFORT "low"
             update_env OPENAI_API_KEY "${{ secrets.OPENAI_API_KEY }}"
             update_env TELEGRAM_BOT_TOKEN "${{ secrets.TELEGRAM_BOT_TOKEN }}"
             if [ -x venv/bin/pip ]; then
