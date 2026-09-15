@@ -2,6 +2,7 @@
 import os
 import logging
 import asyncio
+import io
 import time
 import re
 from pathlib import Path
@@ -159,18 +160,30 @@ def _parse_card_payload(text):
     return {**_classify_card_header(header), "report_text": report_text}
 
 
-def _card_preview_text(payload, card_values, company_form_will_be_created):
+def _card_preview_text(
+    payload,
+    card_values,
+    company_form_will_be_created,
+    address_manual_review_required=False,
+):
     form_notice = (
         "Chua co form cua cong ty: se tao tu COPY sau khi xac nhan.\n"
         if company_form_will_be_created else ""
     )
+    review_notice = (
+        "CAN KIEM TRA THU CONG: vung dia chi nghi van da duoc khoanh do.\n"
+        "Bat buoc gui DIA CHI: [dia chi dung] truoc khi co the XAC NHAN.\n\n"
+        if address_manual_review_required else ""
+    )
+    address = card_values["address"] or "[KHONG DOC DUOC - CAN NHAP THU CONG]"
     return (
         "Kiem tra truoc khi ghi (chi nguoi gui album moi duoc xac nhan):\n\n"
         f"Cong ty + chi nhanh: {payload['company_name']}     {payload['branch_name']}\n"
         f"Ho ten: {card_values['full_name']}\n"
         f"Ngay sinh: {card_values['date_of_birth']}\n"
-        f"Dia chi: {card_values['address']}\n"
+        f"Dia chi: {address}\n"
         f"Han visa: {card_values['visa_expiry']}\n\n"
+        f"{review_notice}"
         f"{form_notice}"
         "Bao cao da vuot qua vong doi chieu noi dung va se ghi vao B31/B33 sau khi xac nhan.\n"
         "Neu can sua dia chi, gui: DIA CHI: [dia chi dung]\n"
@@ -234,14 +247,22 @@ async def _try_process_pending_card_images(message, bot):
 
 
 async def _prepare_card_submission(message, file_ids, caption, bot):
+    address_review_images = []
+    address_manual_review_required = False
     try:
         payload = _parse_card_payload(caption)
         images = await _run_async_prepare_call(
             "TELEGRAM IMAGE DOWNLOAD", _download_card_images, bot, file_ids
         )
         extracted = await _run_prepare_call("CARD OCR", extract_residence_card, images)
+        address_review_images = extracted.pop("_address_review_images", [])
+        address_manual_review_required = extracted.get("address_review_required") is True
         # Image data is deliberately discarded after extraction and never kept in state/logs.
-        card_values = validate_card(extracted, payload["employee_name"])
+        card_values = validate_card(
+            extracted,
+            payload["employee_name"],
+            allow_uncertain_address=address_manual_review_required,
+        )
         spreadsheet_id, file_name = await _run_prepare_call(
             "DRIVE LOOKUP",
             find_spreadsheet_id_strict, payload["company_name"]
@@ -276,9 +297,26 @@ async def _prepare_card_submission(message, file_ids, caption, bot):
         "spreadsheet_id": spreadsheet_id,
         "file_name": file_name,
         "company_form_will_be_created": spreadsheet_id is None,
+        "address_manual_review_required": address_manual_review_required,
     }
+    for index, review_image in enumerate(address_review_images):
+        image_file = io.BytesIO(review_image)
+        image_file.name = f"address-review-{index + 1}.jpg"
+        await message.reply_photo(
+            photo=image_file,
+            caption=(
+                "Vung mau do la ky tu/phan dia chi OCR khong doc chac chan. "
+                "Vui long xem anh va gui lai DIA CHI: [dia chi dung]."
+                if index == 0 else None
+            ),
+        )
     await message.reply_text(
-        _card_preview_text(payload, card_values, spreadsheet_id is None)
+        _card_preview_text(
+            payload,
+            card_values,
+            spreadsheet_id is None,
+            address_manual_review_required,
+        )
     )
 
 
@@ -335,12 +373,14 @@ async def _handle_card_confirmation(message):
     address_match = re.fullmatch(r"(?:DIA\s*CHI|ĐỊA\s*CHỈ)\s*:\s*(.+)", raw_command, re.IGNORECASE | re.DOTALL)
     if address_match:
         pending["card_values"]["address"] = address_match.group(1).strip()
+        pending["address_manual_review_required"] = False
         await message.reply_text(
             "Da cap nhat dia chi trong ban xem truoc. Chua co du lieu nao duoc ghi vao Sheet.\n\n"
             + _card_preview_text(
                 pending["payload"],
                 pending["card_values"],
                 pending["company_form_will_be_created"],
+                False,
             )
         )
         return True
@@ -352,6 +392,12 @@ async def _handle_card_confirmation(message):
         return True
     if command not in {"XAC NHAN", "XACNHAN"}:
         await message.reply_text("Yeu cau dang cho xac nhan. Tra loi XAC NHAN hoac HUY.")
+        return True
+    if pending.get("address_manual_review_required"):
+        await message.reply_text(
+            "Dia chi van dang duoc danh dau nghi van. Hay gui DIA CHI: [dia chi dung] "
+            "truoc khi XAC NHAN."
+        )
         return True
 
     try:

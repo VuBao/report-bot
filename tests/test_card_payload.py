@@ -1,6 +1,14 @@
 import unittest
+import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-from main import _parse_card_payload
+from main import (
+    CARD_CONFIRMATIONS,
+    _card_preview_text,
+    _handle_card_confirmation,
+    _parse_card_payload,
+)
 
 
 class CardPayloadTests(unittest.TestCase):
@@ -38,6 +46,46 @@ class CardPayloadTests(unittest.TestCase):
         self.assertEqual(payload["company_name"], "ABC COMPANY LTD")
         self.assertEqual(payload["employee_name"], "NGUYEN VAN A")
         self.assertEqual(payload["branch_name"], "TOKYO STORE")
+
+    def test_manual_review_preview_requires_corrected_address(self):
+        preview = _card_preview_text(
+            {"company_name": "株式会社ルフォア", "branch_name": "Le Coquillage"},
+            {
+                "full_name": "NGUYEN VAN HUY",
+                "date_of_birth": "1995年01月02日",
+                "address": "",
+                "visa_expiry": "2027年12月31日",
+            },
+            False,
+            True,
+        )
+
+        self.assertIn("CAN KIEM TRA THU CONG", preview)
+        self.assertIn("Bat buoc gui DIA CHI", preview)
+
+
+class CardManualReviewTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self):
+        CARD_CONFIRMATIONS.clear()
+
+    async def test_confirmation_is_blocked_until_manual_address_is_supplied(self):
+        message = SimpleNamespace(
+            chat_id=123,
+            from_user=SimpleNamespace(id=456),
+            text="XAC NHAN",
+            reply_text=AsyncMock(),
+        )
+        CARD_CONFIRMATIONS[123] = {
+            "expires_at": time.monotonic() + 60,
+            "user_id": 456,
+            "address_manual_review_required": True,
+        }
+
+        handled = await _handle_card_confirmation(message)
+
+        self.assertTrue(handled)
+        self.assertIn("DIA CHI", message.reply_text.await_args.args[0])
+        self.assertIn(123, CARD_CONFIRMATIONS)
 
 
 if __name__ == "__main__":

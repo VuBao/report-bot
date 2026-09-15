@@ -12,7 +12,7 @@ from datetime import date, datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from config.sheet_config import (
     COLOR_CELL_DONE,
@@ -45,7 +45,7 @@ GOOGLE_WRITE_MAX_ATTEMPTS = 5
 GOOGLE_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4, 8)
 _DATE_RE = re.compile(r"^(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日$")
 _CARD_ASPECT_RATIO = 85.60 / 53.98
-_FRONT_ADDRESS_CROP = (0.02, 0.29, 0.79, 0.58)
+_FRONT_ADDRESS_CROP = (0.01, 0.24, 0.99, 0.66)
 _BACK_ADDRESS_CROP = (0.02, 0.02, 0.98, 0.53)
 _ADDRESS_CROP_SCALE = 3
 
@@ -74,6 +74,11 @@ Required schema:
 Rules: full_name comes only from 氏名/NAME. date_of_birth comes only from 生年月日/DATE OF BIRTH.
 visa_expiry comes only from 在留期間満了日/THE EXPIRY DATE OF THE PERIOD OF STAY;
 do not use the card-validity date. front_address comes only from 住居地/ADDRESS on the front.
+The front address may wrap onto multiple printed lines (including a second line
+containing Latin text, an apartment number, or a building name). Read every
+line in that field through its final visible character; do not stop at the first
+line or crop the value to the label area. Join wrapped lines with a single space
+in the JSON value, preserving every character and digit.
 For the optional back, list only clearly handwritten/printed entries in 住居地記載欄.
 If no back or no entry, return an empty list. confidence must reflect legibility;
 do not use a high value for guesses. Image indexes are zero-based positions in
@@ -100,12 +105,31 @@ Required schema:
   "front_address": {"value": string, "confidence": number},
   "back_address_entries": [
     {"reported_date": "YYYY年MM月DD日" | "", "address": string, "confidence": number}
+  ],
+  "manual_review_required": boolean,
+  "uncertain_regions": [
+    {
+      "image": "front" | "back",
+      "x_min": integer,
+      "y_min": integer,
+      "x_max": integer,
+      "y_max": integer
+    }
   ]
 }
 
-front_address comes only from 住居地/ADDRESS in the FRONT crop. For the BACK
-crop, list only entries in 住居地記載欄. If there is no BACK crop or no address
-entry, return an empty list. Do not return labels, seals, or unrelated text.
+front_address comes only from 住居地/ADDRESS in the FRONT crop. The FRONT
+address may occupy two printed lines; transcribe both lines through the final
+visible character and join them with a single space in the JSON value. For the
+BACK crop, list only entries in 住居地記載欄. If there is no BACK crop or no
+address entry, return an empty list. Do not return labels, seals, or unrelated
+text. Coordinates are relative to the corresponding supplied crop on a
+0-to-1000 scale. Set manual_review_required to true and tightly bound every
+unclear character or contiguous unclear span in uncertain_regions. This
+includes text that may be missing, cut off, blurred, overwritten by security
+patterns, or easily confused with another Japanese/Latin character or digit.
+If the address is fully legible, return false and an empty uncertain_regions
+list. Never guess merely to avoid manual review.
 """
 
 
@@ -250,24 +274,118 @@ def _resolve_image_indexes(card, image_count):
     return front_index, back_index
 
 
-def _build_address_crop_content(image_bytes_list, first):
+def _build_address_crops(image_bytes_list, first):
     front_index, back_index = _resolve_image_indexes(first, len(image_bytes_list))
-    crops = [("FRONT ADDRESS CROP", front_index, _FRONT_ADDRESS_CROP)]
+    crop_specs = [("front", "FRONT ADDRESS CROP", front_index, _FRONT_ADDRESS_CROP)]
     if back_index is not None:
-        crops.append(("BACK ADDRESS CROP", back_index, _BACK_ADDRESS_CROP))
+        crop_specs.append(("back", "BACK ADDRESS CROP", back_index, _BACK_ADDRESS_CROP))
 
+    return [
+        {
+            "side": side,
+            "label": label,
+            "bytes": _crop_address_region(image_bytes_list[image_index], crop_box),
+        }
+        for side, label, image_index, crop_box in crop_specs
+    ]
+
+
+def _address_crop_content(crops):
     content = []
-    for label, image_index, crop_box in crops:
-        crop_bytes = _crop_address_region(image_bytes_list[image_index], crop_box)
-        encoded = base64.b64encode(crop_bytes).decode("ascii")
+    for crop in crops:
+        encoded = base64.b64encode(crop["bytes"]).decode("ascii")
         content.extend([
-            {"type": "text", "text": label},
+            {"type": "text", "text": crop["label"]},
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
             },
         ])
     return content
+
+
+def _build_address_crop_content(image_bytes_list, first):
+    """Build vision content for tests and callers that only need the payload."""
+    return _address_crop_content(_build_address_crops(image_bytes_list, first))
+
+
+def _normalized_review_box(region, width, height):
+    if not isinstance(region, dict):
+        return None
+    try:
+        x_min = float(region.get("x_min"))
+        y_min = float(region.get("y_min"))
+        x_max = float(region.get("x_max"))
+        y_max = float(region.get("y_max"))
+    except (TypeError, ValueError):
+        return None
+    if not all(0 <= value <= 1000 for value in (x_min, y_min, x_max, y_max)):
+        return None
+    if x_max <= x_min or y_max <= y_min:
+        return None
+
+    padding = max(8, round(min(width, height) * 0.015))
+    return (
+        max(0, round(width * x_min / 1000) - padding),
+        max(0, round(height * y_min / 1000) - padding),
+        min(width - 1, round(width * x_max / 1000) + padding),
+        min(height - 1, round(height * y_max / 1000) + padding),
+    )
+
+
+def _highlight_uncertain_address_regions(crops, address_check):
+    """Return JPEG crops with model-reported uncertainty outlined in red."""
+    regions = address_check.get("uncertain_regions", [])
+    if not isinstance(regions, list):
+        regions = []
+
+    review_images = []
+    for crop in crops:
+        try:
+            with Image.open(io.BytesIO(crop["bytes"])) as source:
+                image = source.convert("RGB")
+        except Exception as exc:
+            raise ValueError("Khong the tao anh danh dau dia chi can kiem tra") from exc
+
+        boxes = []
+        for region in regions:
+            if not isinstance(region, dict):
+                continue
+            if str(region.get("image", "")).strip().lower() != crop["side"]:
+                continue
+            box = _normalized_review_box(region, image.width, image.height)
+            if box is not None:
+                boxes.append(box)
+
+        if not boxes:
+            continue
+
+        draw = ImageDraw.Draw(image)
+        line_width = max(8, round(min(image.size) * 0.012))
+        for box in boxes:
+            draw.rectangle(box, outline=(255, 0, 0), width=line_width)
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=95, optimize=True)
+        review_images.append(output.getvalue())
+
+    if not review_images and crops:
+        # A model can correctly signal uncertainty yet omit usable
+        # coordinates. Keep the workflow safe by marking the full front
+        # address crop instead of returning no visual clue.
+        fallback = next((crop for crop in crops if crop["side"] == "front"), crops[0])
+        with Image.open(io.BytesIO(fallback["bytes"])) as source:
+            image = source.convert("RGB")
+        inset = max(8, round(min(image.size) * 0.015))
+        line_width = max(8, round(min(image.size) * 0.012))
+        ImageDraw.Draw(image).rectangle(
+            (inset, inset, image.width - inset, image.height - inset),
+            outline=(255, 0, 0),
+            width=line_width,
+        )
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=95, optimize=True)
+        review_images.append(output.getvalue())
+    return review_images
 
 
 def _back_entries_need_recheck(card):
@@ -294,6 +412,18 @@ def _address_needs_recheck(card):
         return True
     address, confidence = _value(card.get("front_address"))
     return not address or confidence < MIN_CONFIDENCE or _back_entries_need_recheck(card)
+
+
+def _address_check_needs_manual_review(address_check):
+    if not isinstance(address_check, dict):
+        return True
+    if address_check.get("manual_review_required") is not False:
+        return True
+    regions = address_check.get("uncertain_regions", [])
+    if not isinstance(regions, list) or regions:
+        return True
+    address, confidence = _value(address_check.get("front_address"))
+    return not address or confidence < MIN_CONFIDENCE or _back_entries_need_recheck(address_check)
 
 
 def _merge_address_recheck(first, address_check):
@@ -370,7 +500,7 @@ def _merge_address_recheck(first, address_check):
                     checked_back_confidence[key],
                 ),
             })
-    verified["address_review_required"] = False
+    verified["address_review_required"] = _address_check_needs_manual_review(address_check)
     return verified
 
 
@@ -392,7 +522,7 @@ def _today_japanese():
     return f"作成日：{now.year}年{now.month:02d}月{now.day:02d}日"
 
 
-def validate_card(card, submitted_name):
+def validate_card(card, submitted_name, *, allow_uncertain_address=False):
     """Validate all allowed values; returns only the fields permitted for storage."""
     if not isinstance(card, dict) or card.get("document_type") != "residence_card":
         raise ValueError("Anh khong duoc xac dinh chac chan la the ngoai kieu")
@@ -405,6 +535,15 @@ def validate_card(card, submitted_name):
 
     dob = _parse_japanese_date(_required_value(card, "date_of_birth"), "Ngay sinh")
     visa_expiry = _parse_japanese_date(_required_value(card, "visa_expiry"), "Han visa")
+    if allow_uncertain_address:
+        front_address, _ = _value(card.get("front_address"))
+        return {
+            "full_name": full_name,
+            "date_of_birth": dob,
+            "address": front_address,
+            "visa_expiry": visa_expiry,
+        }
+
     front_address = _required_value(card, "front_address")
     back_entries = card.get("back_address_entries", [])
     if not isinstance(back_entries, list):
@@ -496,7 +635,8 @@ def extract_residence_card(image_bytes_list):
     if not _address_needs_recheck(first):
         return first
 
-    address_crop_content = _build_address_crop_content(image_bytes_list, first)
+    address_crops = _build_address_crops(image_bytes_list, first)
+    address_crop_content = _address_crop_content(address_crops)
     address_check = _call_vision(
         client,
         verification_model,
@@ -504,7 +644,12 @@ def extract_residence_card(image_bytes_list):
         VISION_VERIFY_PROMPT,
         "Independently transcribe only the address fields from these enlarged crops.",
     )
-    return _merge_address_recheck(first, address_check)
+    merged = _merge_address_recheck(first, address_check)
+    if merged.get("address_review_required") is True:
+        merged["_address_review_images"] = _highlight_uncertain_address_regions(
+            address_crops, address_check
+        )
+    return merged
 
 
 def _find_worksheet_exact(spreadsheet, employee_name):

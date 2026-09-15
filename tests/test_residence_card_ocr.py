@@ -8,8 +8,11 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 from services.residence_card_service import (
+    _FRONT_ADDRESS_CROP,
     _address_needs_recheck,
+    _build_address_crops,
     _build_address_crop_content,
+    _highlight_uncertain_address_regions,
     _merge_address_recheck,
     extract_residence_card,
     validate_card,
@@ -41,10 +44,16 @@ def _card(
 def _address_check(
     address="東京都北区中里2丁目22番10-301号 アンビハイツ",
     confidence=0.99,
+    manual_review_required=False,
+    uncertain_regions=None,
 ):
+    if uncertain_regions is None:
+        uncertain_regions = []
     return {
         "front_address": {"value": address, "confidence": confidence},
         "back_address_entries": [],
+        "manual_review_required": manual_review_required,
+        "uncertain_regions": uncertain_regions,
     }
 
 
@@ -79,6 +88,59 @@ class ResidenceCardOcrTests(unittest.TestCase):
 
         self.assertEqual(content[0]["text"], "FRONT ADDRESS CROP")
         self.assertEqual(content[2]["text"], "BACK ADDRESS CROP")
+
+    def test_front_address_crop_keeps_wrapped_line_and_trailing_text(self):
+        self.assertLessEqual(_FRONT_ADDRESS_CROP[0], 0.01)
+        self.assertGreaterEqual(_FRONT_ADDRESS_CROP[2], 0.98)
+        self.assertLessEqual(_FRONT_ADDRESS_CROP[1], 0.24)
+        self.assertGreaterEqual(_FRONT_ADDRESS_CROP[3], 0.66)
+
+    def test_draws_red_box_around_uncertain_address_span(self):
+        crops = _build_address_crops([_jpeg_bytes()], _card())
+        highlighted = _highlight_uncertain_address_regions(
+            crops,
+            _address_check(
+                confidence=0.60,
+                manual_review_required=True,
+                uncertain_regions=[{
+                    "image": "front",
+                    "x_min": 100,
+                    "y_min": 200,
+                    "x_max": 300,
+                    "y_max": 400,
+                }],
+            ),
+        )
+
+        self.assertEqual(len(highlighted), 1)
+        with Image.open(io.BytesIO(highlighted[0])) as image:
+            red_pixels = sum(
+                1
+                for red, green, blue in image.getdata()
+                if red > 200 and green < 80 and blue < 80
+            )
+        self.assertGreater(red_pixels, 100)
+
+    def test_marks_entire_front_crop_when_uncertainty_has_no_valid_box(self):
+        crops = _build_address_crops([_jpeg_bytes()], _card())
+
+        highlighted = _highlight_uncertain_address_regions(
+            crops,
+            _address_check(
+                confidence=0.60,
+                manual_review_required=True,
+                uncertain_regions=[],
+            ),
+        )
+
+        self.assertEqual(len(highlighted), 1)
+        with Image.open(io.BytesIO(highlighted[0])) as image:
+            red_pixels = sum(
+                1
+                for red, green, blue in image.getdata()
+                if red > 200 and green < 80 and blue < 80
+            )
+        self.assertGreater(red_pixels, 100)
 
     def test_uses_lower_confidence_from_two_matching_passes(self):
         verified = _merge_address_recheck(
@@ -176,6 +238,45 @@ class ResidenceCardOcrTests(unittest.TestCase):
             "東京都北区中里2丁目22番10-301号 アンビシャス",
         )
         self.assertFalse(result["address_review_required"])
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch("openai.OpenAI")
+    def test_uncertain_second_pass_returns_highlight_for_manual_review(
+        self, openai_client
+    ):
+        uncertain = _card(address_confidence=0.50)
+        first_response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(uncertain)))]
+        )
+        second_response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(
+                _address_check(
+                    confidence=0.70,
+                    manual_review_required=True,
+                    uncertain_regions=[{
+                        "image": "front",
+                        "x_min": 650,
+                        "y_min": 300,
+                        "x_max": 800,
+                        "y_max": 500,
+                    }],
+                )
+            )))]
+        )
+        openai_client.return_value.chat.completions.create = Mock(
+            side_effect=[first_response, second_response]
+        )
+
+        result = extract_residence_card([_jpeg_bytes()])
+
+        self.assertTrue(result["address_review_required"])
+        self.assertEqual(len(result["_address_review_images"]), 1)
+        review_values = validate_card(
+            result,
+            "NGUYEN VAN HUY",
+            allow_uncertain_address=True,
+        )
+        self.assertEqual(review_values["address"], _card()["front_address"]["value"])
 
 
 if __name__ == "__main__":
