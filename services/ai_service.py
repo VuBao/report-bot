@@ -1,6 +1,7 @@
 # services/ai_service.py
 import os
 import json
+import logging
 import re
 
 from utils.openai_compat import (
@@ -13,6 +14,11 @@ DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-5"
 MODEL = DEFAULT_ANTHROPIC_MODEL
 REPORT_MAX_ATTEMPTS = 4
+logger = logging.getLogger(__name__)
+
+
+class AIResponseFormatError(ValueError):
+    """The provider returned no usable JSON after bounded recovery."""
 
 
 def extract_certified_japanese_level(raw_text: str) -> str | None:
@@ -373,7 +379,9 @@ def _call_openai(
     max_tokens,
     model,
     temperature=0,
-    reasoning_effort="medium",
+    reasoning_effort="low",
+    recovery_max_tokens=None,
+    operation="text",
 ):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -384,17 +392,49 @@ def _call_openai(
         raise RuntimeError("Thieu dependency openai. Hay cai lai requirements.txt") from e
 
     client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(**build_chat_completion_kwargs(
-        model=model,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        reasoning_effort=reasoning_effort,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-    ))
-    return (response.choices[0].message.content or "").strip()
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    attempts = [(reasoning_effort, max_tokens)]
+    if is_gpt5_model(model):
+        attempts.append(("minimal", recovery_max_tokens or max_tokens))
+
+    last_error = None
+    for attempt_number, (effort, token_budget) in enumerate(attempts, start=1):
+        response = client.chat.completions.create(**build_chat_completion_kwargs(
+            model=model,
+            max_tokens=token_budget,
+            temperature=temperature,
+            reasoning_effort=effort,
+            messages=messages,
+        ))
+        choice = response.choices[0]
+        raw = (choice.message.content or "").strip()
+        try:
+            json.loads(_strip_json_fence(raw))
+            return raw
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            usage = getattr(response, "usage", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+            details = getattr(usage, "completion_tokens_details", None)
+            reasoning_tokens = getattr(details, "reasoning_tokens", None)
+            logger.warning(
+                "[OPENAI JSON] Invalid response; operation=%s attempt=%s/%s "
+                "finish_reason=%s empty=%s completion_tokens=%s reasoning_tokens=%s",
+                operation,
+                attempt_number,
+                len(attempts),
+                getattr(choice, "finish_reason", None),
+                not bool(raw),
+                completion_tokens,
+                reasoning_tokens,
+            )
+
+    raise AIResponseFormatError(
+        f"AI khong tra ve JSON hop le cho buoc {operation} sau khi thu lai"
+    ) from last_error
 
 def _call_anthropic(system_prompt, user_content, max_tokens, model, temperature=0):
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -422,8 +462,10 @@ def _call_ai(
     openai_model,
     anthropic_model,
     temperature=0,
-    openai_reasoning_effort="medium",
+    openai_reasoning_effort="low",
     gpt5_max_completion_tokens=None,
+    gpt5_recovery_max_completion_tokens=None,
+    operation="text",
 ):
     provider = _select_provider()
     if provider == "openai":
@@ -437,6 +479,8 @@ def _call_ai(
             openai_model,
             temperature,
             openai_reasoning_effort,
+            gpt5_recovery_max_completion_tokens,
+            operation,
         )
     return _call_anthropic(system_prompt, user_content, max_tokens, anthropic_model, temperature)
 
@@ -531,9 +575,11 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
                 # deterministic fact-check before it can be exported.
                 temperature=0.2,
                 openai_reasoning_effort=reasoning_effort_from_env(
-                    "OPENAI_REPORT_REASONING_EFFORT", "medium"
+                    "OPENAI_REPORT_REASONING_EFFORT", "low"
                 ),
                 gpt5_max_completion_tokens=6000,
+                gpt5_recovery_max_completion_tokens=8000,
+                operation="report_draft",
             )
             result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
             review = review_report(
@@ -542,6 +588,10 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
                 result["current_situation"],
                 result["future_plan"],
             )
+        except AIResponseFormatError as exc:
+            raise ValueError(
+                "AI khong tra ve JSON hop le sau buoc phuc hoi; khong ghi vao Sheet"
+            ) from exc
         except (ValueError, KeyError, TypeError) as exc:
             last_error = str(exc)
             review_issues = ["Bao cao hoac ket qua doi chieu khong hop le"]
@@ -654,8 +704,10 @@ def review_report(raw_text: str, employee_name: str, current_situation: str, fut
         ),
         anthropic_model=os.getenv("ANTHROPIC_REVIEW_MODEL", "claude-sonnet-4-6"),
         openai_reasoning_effort=reasoning_effort_from_env(
-            "OPENAI_REVIEW_REASONING_EFFORT", "medium"
+            "OPENAI_REVIEW_REASONING_EFFORT", "low"
         ),
         gpt5_max_completion_tokens=2500,
+        gpt5_recovery_max_completion_tokens=4000,
+        operation="report_review",
     )
     return _loads_json(raw)

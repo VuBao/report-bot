@@ -91,3 +91,39 @@ response schema khác, phải chuyển test sang schema mới nhưng vẫn giữ
 - retry dùng cấu hình tiết kiệm reasoning budget hơn;
 - thất bại cuối cùng không được ghi Sheet;
 - log chẩn đoán không chứa PII.
+
+## 2026-09-15 — GPT-5 tạo/review báo cáo trả JSON rỗng
+
+### Dấu hiệu và phạm vi
+
+- OCR thẻ đã hoàn tất nhưng bước `generate_report()` thất bại.
+- Bot chạy đủ bốn vòng rồi báo `Expecting value: line 1 column 1` với preview
+  nội dung rỗng.
+- Lỗi xảy ra trước preview và ghi Sheet, nên dữ liệu production không bị ghi dở.
+- Log cũ không gắn nhãn draft/review và không có token metadata, nên không thể
+  kết luận response rỗng đến từ bước nào trong hai bước đó.
+
+### Nguyên nhân và yếu tố góp phần
+
+1. Lớp OpenAI text trả raw content mà không kiểm tra JSON. Output rỗng chỉ bị
+   phát hiện ở parser phía ngoài.
+2. GPT-5 draft dùng reasoning `medium` với 6.000 token; review dùng `medium` với
+   2.500 token. Reasoning có thể chiếm hết completion budget trước visible JSON.
+3. Outer loop coi lỗi định dạng giống một draft sai fact, nên lặp lại toàn bộ
+   pipeline tối đa bốn lần. Việc này vừa chậm vừa có thể phát sinh nhiều chi phí
+   nhưng không thay đổi cấu hình gây lỗi.
+4. Không có log `operation=report_draft/report_review`, `finish_reason` và token
+   breakdown nên không xác định nhanh tầng bị lỗi.
+5. Regression test migration chỉ kiểm tra request parameter và JSON thành công,
+   chưa mô phỏng text completion HTTP thành công nhưng content rỗng.
+
+### Bản sửa và invariant mới
+
+- Draft và review dùng reasoning `low`; vẫn giữ review độc lập để kiểm tra facts.
+- Lớp OpenAI kiểm tra JSON ngay sau response. Nếu GPT-5 trả rỗng/JSON lỗi, retry
+  đúng một lần với `minimal`: draft tối đa 8.000 token, review 4.000 token.
+- Mỗi log lỗi có stage, lần thử, `finish_reason`, completion/reasoning token và
+  cờ output rỗng; không log prompt hoặc raw report.
+- Nếu recovery vẫn thất bại, dừng sớm thay vì tái tạo draft bốn vòng. Outer loop
+  bốn vòng chỉ dành cho báo cáo có JSON hợp lệ nhưng chưa qua fact-check/detail.
+- Các test recovery và bounded failure phải được giữ khi đổi model/endpoint.
