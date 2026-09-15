@@ -72,6 +72,8 @@ Required schema:
   "full_name": {"value": string, "confidence": number},
   "date_of_birth": {"value": "YYYY年MM月DD日" | "", "confidence": number},
   "front_address": {"value": string, "confidence": number},
+  "front_address_line_count": 1 | 2 | null,
+  "front_address_lines": [string],
   "back_address_entries": [
     {"reported_date": "YYYY年MM月DD日" | "", "address": string, "confidence": number}
   ],
@@ -84,8 +86,20 @@ do not use the card-validity date. front_address comes only from 住居地/ADDRE
 The front address may wrap onto multiple printed lines (including a second line
 containing Latin text, an apartment number, or a building name). Read every
 line in that field through its final visible character; do not stop at the first
-line or crop the value to the label area. Join wrapped lines with a single space
-in the JSON value, preserving every character and digit.
+line or crop the value to the label area. Scan both the far-right end and the
+far-left start of every visual line. A room number can split across the physical
+line boundary: for example, `2` at the far right followed by `01` at the far
+left is one number, `201`, and must be concatenated without a space. Otherwise
+join wrapped lines with a single space. Preserve every visible character and
+digit; if either fragment is unclear, require address review instead of guessing.
+front_address_lines must contain the exact visible address text on each physical
+line, in top-to-bottom order, excluding the 住居地/ADDRESS labels. Set
+front_address_line_count to the number of those lines. The whitespace-insensitive
+concatenation of front_address_lines must contain exactly the same characters
+and digits as front_address.value. The supplied content includes each original
+card image and an enlarged candidate front-address crop derived from that same
+original. Use the enlarged crop to inspect small text; image indexes refer only
+to the original images identified by their labels.
 For the optional back, list only clearly handwritten/printed entries in 住居地記載欄.
 If no back or no entry, return an empty list. confidence must reflect legibility;
 do not use a high value for guesses. Image indexes are zero-based positions in
@@ -110,6 +124,8 @@ guessing.
 Required schema:
 {
   "front_address": {"value": string, "confidence": number},
+  "front_address_line_count": 1 | 2 | null,
+  "front_address_lines": [string],
   "back_address_entries": [
     {"reported_date": "YYYY年MM月DD日" | "", "address": string, "confidence": number}
   ],
@@ -127,7 +143,15 @@ Required schema:
 
 front_address comes only from 住居地/ADDRESS in the FRONT crop. The FRONT
 address may occupy two printed lines; transcribe both lines through the final
-visible character and join them with a single space in the JSON value. For the
+visible character. Inspect the far-right end of the upper line and then the
+far-left start of the next line before finalizing the value. If consecutive
+digit fragments cross that visual boundary, concatenate them as one room
+number without a space (`2` + `01` becomes `201`). Otherwise join lines with a
+single space. Never drop leading zeroes from the continuation fragment. For the
+FRONT crop, also return each exact physical address line in
+front_address_lines, top to bottom, and the matching front_address_line_count.
+The whitespace-insensitive concatenation of those lines must exactly equal the
+characters in front_address.value. If it does not, require manual review. For the
 BACK crop, list only entries in 住居地記載欄. If there is no BACK crop or no
 address entry, return an empty list. Do not return labels, seals, or unrelated
 text. Coordinates are relative to the corresponding supplied crop on a
@@ -168,6 +192,46 @@ def _normalize_text(value):
 
 def _normalize_ocr_text(value):
     return unicodedata.normalize("NFKC", _normalize_text(value))
+
+
+def _has_suspicious_wrapped_room_fragment(address):
+    """Detect a likely room number cut at a residence-card line boundary."""
+    text = _normalize_ocr_text(address)
+    trailing = re.search(r"\s([0-9]{1,2})$", text)
+    if trailing is None:
+        return False
+    prefix = text[:trailing.start()]
+    building_start = prefix.rfind("号")
+    if building_start < 0:
+        return False
+    building_text = prefix[building_start + 1:]
+    return any(character.isalpha() for character in building_text)
+
+
+def _compact_ocr_text(value):
+    """Normalize OCR text for character-coverage comparisons across line wraps."""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")))
+
+
+def _address_lines_complete(card):
+    """Require one/two physical lines to cover every character in the final address."""
+    if not isinstance(card, dict):
+        return False
+    lines = card.get("front_address_lines")
+    line_count = card.get("front_address_line_count")
+    address, _ = _value(card.get("front_address"))
+    if (
+        not isinstance(lines, list)
+        or len(lines) not in {1, 2}
+        or isinstance(line_count, bool)
+        or line_count != len(lines)
+        or not address
+    ):
+        return False
+    compact_lines = [_compact_ocr_text(line) for line in lines]
+    if not all(compact_lines):
+        return False
+    return "".join(compact_lines) == _compact_ocr_text(address)
 
 
 def _value(field):
@@ -251,6 +315,35 @@ def _crop_address_region(image_bytes, normalized_box):
     return output.getvalue()
 
 
+def _vision_image_part(image_bytes):
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
+    }
+
+
+def _build_first_pass_image_content(image_bytes_list):
+    """Pair every original with an enlarged address candidate in the same OCR call."""
+    content = []
+    for image_index, image_bytes in enumerate(image_bytes_list):
+        content.extend([
+            {"type": "text", "text": f"ORIGINAL IMAGE INDEX {image_index}"},
+            _vision_image_part(image_bytes),
+            {
+                "type": "text",
+                "text": (
+                    "ENLARGED FRONT ADDRESS CANDIDATE FROM ORIGINAL "
+                    f"IMAGE INDEX {image_index}"
+                ),
+            },
+            _vision_image_part(
+                _crop_address_region(image_bytes, _FRONT_ADDRESS_CROP)
+            ),
+        ])
+    return content
+
+
 def _resolve_image_indexes(card, image_count):
     if not isinstance(card, dict):
         raise ValueError("AI khong tra ve du lieu the hop le")
@@ -300,13 +393,9 @@ def _build_address_crops(image_bytes_list, first):
 def _address_crop_content(crops):
     content = []
     for crop in crops:
-        encoded = base64.b64encode(crop["bytes"]).decode("ascii")
         content.extend([
             {"type": "text", "text": crop["label"]},
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
-            },
+            _vision_image_part(crop["bytes"]),
         ])
     return content
 
@@ -418,7 +507,13 @@ def _address_needs_recheck(card):
     if card.get("address_review_required") is True:
         return True
     address, confidence = _value(card.get("front_address"))
-    return not address or confidence < MIN_CONFIDENCE or _back_entries_need_recheck(card)
+    return (
+        not address
+        or confidence < MIN_CONFIDENCE
+        or not _address_lines_complete(card)
+        or _has_suspicious_wrapped_room_fragment(address)
+        or _back_entries_need_recheck(card)
+    )
 
 
 def _address_check_needs_manual_review(address_check):
@@ -430,7 +525,13 @@ def _address_check_needs_manual_review(address_check):
     if not isinstance(regions, list) or regions:
         return True
     address, confidence = _value(address_check.get("front_address"))
-    return not address or confidence < MIN_CONFIDENCE or _back_entries_need_recheck(address_check)
+    return (
+        not address
+        or confidence < MIN_CONFIDENCE
+        or not _address_lines_complete(address_check)
+        or _has_suspicious_wrapped_room_fragment(address)
+        or _back_entries_need_recheck(address_check)
+    )
 
 
 def _merge_address_recheck(first, address_check):
@@ -445,6 +546,8 @@ def _merge_address_recheck(first, address_check):
         bool(first_address)
         and first_confidence >= MIN_CONFIDENCE
         and not review_requested
+        and _address_lines_complete(first)
+        and not _has_suspicious_wrapped_room_fragment(first_address)
     )
     if (
         first_front_reliable
@@ -465,6 +568,10 @@ def _merge_address_recheck(first, address_check):
             "value": checked_address,
             "confidence": checked_confidence,
         }
+        verified["front_address_line_count"] = address_check.get(
+            "front_address_line_count"
+        )
+        verified["front_address_lines"] = address_check.get("front_address_lines")
 
     if review_requested or _back_entries_need_recheck(first):
         checked_entries = address_check.get("back_address_entries", [])
@@ -552,6 +659,10 @@ def validate_card(card, submitted_name, *, allow_uncertain_address=False):
         }
 
     front_address = _required_value(card, "front_address")
+    if not _address_lines_complete(card):
+        raise ValueError(
+            "Dia chi mat truoc khong khop du ky tu giua cac dong; vui long kiem tra lai"
+        )
     back_entries = card.get("back_address_entries", [])
     if not isinstance(back_entries, list):
         raise ValueError("Du lieu dia chi mat sau khong hop le")
@@ -657,13 +768,7 @@ def extract_residence_card(image_bytes_list):
     except ImportError as exc:
         raise RuntimeError("Thieu dependency openai") from exc
 
-    image_content = []
-    for image_bytes in image_bytes_list:
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        image_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
-        })
+    image_content = _build_first_pass_image_content(image_bytes_list)
 
     client = OpenAI(api_key=api_key)
     extraction_model = os.getenv(

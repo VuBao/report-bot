@@ -127,3 +127,53 @@ response schema khác, phải chuyển test sang schema mới nhưng vẫn giữ
 - Nếu recovery vẫn thất bại, dừng sớm thay vì tái tạo draft bốn vòng. Outer loop
   bốn vòng chỉ dành cho báo cáo có JSON hợp lệ nhưng chưa qua fact-check/detail.
 - Các test recovery và bounded failure phải được giữ khi đổi model/endpoint.
+
+## 2026-09-15 — ADDRESS một hoặc hai dòng bị trích xuất thiếu
+
+### Mẫu lỗi
+
+Địa chỉ trên thẻ có số phòng `201` bị chia theo bố cục vật lý: chữ số `2` nằm
+ở cuối dòng trên, còn `01` nằm ở đầu dòng dưới. OCR trả:
+
+`東京都品川区二葉3丁目11番5号 インベスト西大井 2`
+
+thay vì:
+
+`東京都品川区二葉3丁目11番5号 インベスト西大井 201`
+
+### Nguyên nhân
+
+1. Prompt cũ yêu cầu nối mọi dòng bằng một khoảng trắng, nhưng không định nghĩa
+   ngoại lệ khi một token số bị chia qua ranh giới dòng.
+2. Model lượt một trả confidence cao và không bật `address_review_required`, nên
+   policy “chỉ verify khi nghi vấn” đã bỏ qua crop lượt hai.
+3. Code chỉ dùng confidence/model doubt để quyết định verify; chưa có heuristic
+   cho địa chỉ kết thúc bằng fragment số phòng ngắn sau tên tòa nhà.
+4. Chốt so sánh hai lượt coi lượt một confidence cao là reliable, nên ngay cả
+   khi ép verify, kết quả đầy đủ `201` cũng có thể bị từ chối vì khác `2`.
+5. Regression suite có địa chỉ hai dòng và tên tòa nhà, nhưng chưa có fixture
+   `2 | 01`, nên không phát hiện lỗi bố cục này.
+
+### Bản sửa và invariant tổng quát
+
+- Lượt OCR đầu nhận đồng thời ảnh thẻ đầy đủ và vùng ADDRESS đã crop/phóng lớn.
+  Vì vậy model có cả ngữ cảnh để xác định mặt thẻ lẫn đủ độ phân giải để đọc đến
+  hai mép của trường ADDRESS, nhưng vẫn chỉ phát sinh một API call khi kết quả rõ.
+- Schema bắt buộc trả `front_address_line_count` và `front_address_lines`, chứa
+  nguyên văn từng dòng vật lý theo thứ tự trên xuống. Áp dụng giống nhau cho địa
+  chỉ một dòng và hai dòng, không phụ thuộc tên tòa nhà hay dạng số phòng.
+- Code bỏ khoảng trắng rồi đối chiếu phép nối tất cả dòng vật lý với
+  `front_address.value`. Thiếu/thừa dù chỉ một ký tự, sai số dòng, dòng rỗng hoặc
+  metadata không hợp lệ đều kích hoạt lượt crop verify thứ hai.
+- Với token bị chia tại ranh giới dòng, ví dụ `2` ở cuối dòng trên và `01` ở đầu
+  dòng dưới, giá trị cuối phải là `201`; không được bỏ số `0` hoặc tự chèn khoảng
+  trắng vào giữa một token. Quy tắc này chỉ là một ví dụ của phép đối chiếu độ
+  phủ ký tự, không phải điều kiện duy nhất của bản sửa.
+- Địa chỉ một hoặc hai dòng đã đủ ký tự, confidence cao và không có tín hiệu nghi
+  vấn sẽ không gọi lượt hai. Lượt hai chỉ chạy khi thiếu/mismatch/confidence thấp
+  hoặc model chủ động yêu cầu review.
+- Heuristic số phòng ngắn vẫn giữ làm lớp cảnh báo phụ, không tự đoán hay bổ sung
+  ký tự. Nếu crop vẫn không xác nhận đủ dữ liệu, bot chuyển manual review và
+  highlight vùng ADDRESS thay vì ghi một địa chỉ có vẻ hợp lý vào Sheet.
+- Regression suite phải có cả địa chỉ một dòng, hai dòng hoàn chỉnh, hai dòng bị
+  thiếu ký tự, và tình huống crop lượt hai vẫn không thể xác nhận.
