@@ -29,6 +29,10 @@ from config.sheet_config import (
     FORM_VISA_EXPIRY_CELL,
 )
 from utils.retry import exception_http_status, is_transient_external_error
+from utils.openai_compat import (
+    build_chat_completion_kwargs,
+    reasoning_effort_from_env,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -577,11 +581,20 @@ def validate_card(card, submitted_name, *, allow_uncertain_address=False):
     }
 
 
-def _call_vision(client, model, image_content, prompt, instruction):
-    response = client.chat.completions.create(
+def _call_vision(
+    client,
+    model,
+    image_content,
+    prompt,
+    instruction,
+    *,
+    reasoning_effort,
+):
+    response = client.chat.completions.create(**build_chat_completion_kwargs(
         model=model,
+        max_tokens=3000,
         temperature=0,
-        response_format={"type": "json_object"},
+        reasoning_effort=reasoning_effort,
         messages=[
             {"role": "system", "content": prompt},
             {
@@ -592,7 +605,7 @@ def _call_vision(client, model, image_content, prompt, instruction):
                 ],
             },
         ],
-    )
+    ))
     raw = (response.choices[0].message.content or "").strip()
     try:
         return json.loads(raw)
@@ -622,7 +635,7 @@ def extract_residence_card(image_bytes_list):
 
     client = OpenAI(api_key=api_key)
     extraction_model = os.getenv(
-        "OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o")
+        "OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-5")
     )
     verification_model = os.getenv("OPENAI_VISION_VERIFY_MODEL", extraction_model)
     first = _call_vision(
@@ -631,6 +644,9 @@ def extract_residence_card(image_bytes_list):
         image_content,
         VISION_PROMPT,
         "Extract all permitted residence-card fields using the required JSON schema.",
+        reasoning_effort=reasoning_effort_from_env(
+            "OPENAI_VISION_REASONING_EFFORT", "low"
+        ),
     )
     if not _address_needs_recheck(first):
         return first
@@ -643,6 +659,9 @@ def extract_residence_card(image_bytes_list):
         address_crop_content,
         VISION_VERIFY_PROMPT,
         "Independently transcribe only the address fields from these enlarged crops.",
+        reasoning_effort=reasoning_effort_from_env(
+            "OPENAI_VISION_VERIFY_REASONING_EFFORT", "medium"
+        ),
     )
     merged = _merge_address_recheck(first, address_check)
     if merged.get("address_review_required") is True:

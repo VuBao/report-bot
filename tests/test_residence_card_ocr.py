@@ -163,7 +163,9 @@ class ResidenceCardOcrTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "front_address"):
             validate_card(verified, "NGUYEN VAN HUY")
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch.dict(
+        "os.environ", {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-5"}
+    )
     @patch("openai.OpenAI")
     def test_extract_confident_first_pass_skips_second_call(self, openai_client):
         first_response = SimpleNamespace(
@@ -176,8 +178,15 @@ class ResidenceCardOcrTests(unittest.TestCase):
 
         self.assertEqual(result["front_address"]["value"], _card()["front_address"]["value"])
         self.assertEqual(create.call_count, 1)
+        sent = create.call_args.kwargs
+        self.assertEqual(sent["model"], "gpt-5")
+        self.assertEqual(sent["reasoning_effort"], "low")
+        self.assertEqual(sent["max_completion_tokens"], 3000)
+        self.assertNotIn("temperature", sent)
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch.dict(
+        "os.environ", {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-5"}
+    )
     @patch("openai.OpenAI")
     def test_uncertain_first_pass_uses_enlarged_address_crop(self, openai_client):
         uncertain = _card(
@@ -203,6 +212,9 @@ class ResidenceCardOcrTests(unittest.TestCase):
         first_prompt = create.call_args_list[0].kwargs["messages"][0]["content"]
         second_prompt = create.call_args_list[1].kwargs["messages"][0]["content"]
         self.assertNotEqual(first_prompt, second_prompt)
+        self.assertEqual(
+            create.call_args_list[1].kwargs["reasoning_effort"], "medium"
+        )
 
         second_content = create.call_args_list[1].kwargs["messages"][1]["content"]
         self.assertEqual(second_content[0]["text"], "FRONT ADDRESS CROP")
@@ -212,7 +224,9 @@ class ResidenceCardOcrTests(unittest.TestCase):
             self.assertGreater(crop.width, crop.height)
             self.assertGreater(crop.width, 3000)
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch.dict(
+        "os.environ", {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-5"}
+    )
     @patch("openai.OpenAI")
     def test_explicit_model_doubt_triggers_recheck_and_uses_crop_result(
         self, openai_client
@@ -239,7 +253,9 @@ class ResidenceCardOcrTests(unittest.TestCase):
         )
         self.assertFalse(result["address_review_required"])
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch.dict(
+        "os.environ", {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "gpt-5"}
+    )
     @patch("openai.OpenAI")
     def test_uncertain_second_pass_returns_highlight_for_manual_review(
         self, openai_client

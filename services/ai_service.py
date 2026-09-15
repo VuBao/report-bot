@@ -3,8 +3,14 @@ import os
 import json
 import re
 
+from utils.openai_compat import (
+    build_chat_completion_kwargs,
+    is_gpt5_model,
+    reasoning_effort_from_env,
+)
+
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5"
-DEFAULT_OPENAI_MODEL = "gpt-4o"
+DEFAULT_OPENAI_MODEL = "gpt-5"
 MODEL = DEFAULT_ANTHROPIC_MODEL
 REPORT_MAX_ATTEMPTS = 4
 
@@ -361,7 +367,14 @@ def _apply_term_fixes(result):
         result[key] = value
     return result
 
-def _call_openai(system_prompt, user_content, max_tokens, model, temperature=0):
+def _call_openai(
+    system_prompt,
+    user_content,
+    max_tokens,
+    model,
+    temperature=0,
+    reasoning_effort="medium",
+):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY chua duoc cau hinh trong .env")
@@ -371,16 +384,16 @@ def _call_openai(system_prompt, user_content, max_tokens, model, temperature=0):
         raise RuntimeError("Thieu dependency openai. Hay cai lai requirements.txt") from e
 
     client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
+    response = client.chat.completions.create(**build_chat_completion_kwargs(
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
-        response_format={"type": "json_object"},
+        reasoning_effort=reasoning_effort,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-    )
+    ))
     return (response.choices[0].message.content or "").strip()
 
 def _call_anthropic(system_prompt, user_content, max_tokens, model, temperature=0):
@@ -402,10 +415,29 @@ def _call_anthropic(system_prompt, user_content, max_tokens, model, temperature=
     )
     return response.content[0].text.strip()
 
-def _call_ai(system_prompt, user_content, max_tokens, openai_model, anthropic_model, temperature=0):
+def _call_ai(
+    system_prompt,
+    user_content,
+    max_tokens,
+    openai_model,
+    anthropic_model,
+    temperature=0,
+    openai_reasoning_effort="medium",
+    gpt5_max_completion_tokens=None,
+):
     provider = _select_provider()
     if provider == "openai":
-        return _call_openai(system_prompt, user_content, max_tokens, openai_model, temperature)
+        openai_max_tokens = max_tokens
+        if is_gpt5_model(openai_model) and gpt5_max_completion_tokens is not None:
+            openai_max_tokens = gpt5_max_completion_tokens
+        return _call_openai(
+            system_prompt,
+            user_content,
+            openai_max_tokens,
+            openai_model,
+            temperature,
+            openai_reasoning_effort,
+        )
     return _call_anthropic(system_prompt, user_content, max_tokens, anthropic_model, temperature)
 
 def _build_report_user_content(raw_text: str, employee_name: str) -> str:
@@ -498,6 +530,10 @@ def generate_report(raw_text: str, employee_name: str) -> dict:
                 # wording/structure path.  Each result still passes the
                 # deterministic fact-check before it can be exported.
                 temperature=0.2,
+                openai_reasoning_effort=reasoning_effort_from_env(
+                    "OPENAI_REPORT_REASONING_EFFORT", "medium"
+                ),
+                gpt5_max_completion_tokens=6000,
             )
             result = _validate_report_result(_apply_term_fixes(_loads_json(raw)))
             review = review_report(
@@ -617,5 +653,9 @@ def review_report(raw_text: str, employee_name: str, current_situation: str, fut
             ),
         ),
         anthropic_model=os.getenv("ANTHROPIC_REVIEW_MODEL", "claude-sonnet-4-6"),
+        openai_reasoning_effort=reasoning_effort_from_env(
+            "OPENAI_REVIEW_REASONING_EFFORT", "medium"
+        ),
+        gpt5_max_completion_tokens=2500,
     )
     return _loads_json(raw)

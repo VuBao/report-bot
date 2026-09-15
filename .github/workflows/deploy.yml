@@ -29,7 +29,15 @@ jobs:
               ENV_KEY="$key" ENV_VALUE="$value" python3 -c 'import os; from pathlib import Path; path = Path(".env"); key = os.environ["ENV_KEY"]; value = os.environ["ENV_VALUE"]; lines = path.read_text().splitlines() if path.exists() else []; prefix = key + "="; index = next((i for i, line in enumerate(lines) if line.startswith(prefix)), None); lines.append(prefix + value) if index is None else lines.__setitem__(index, prefix + value); path.write_text("\n".join(lines) + "\n")'
             }
             update_env AI_PROVIDER "auto"
-            update_env OPENAI_MODEL "${{ secrets.OPENAI_MODEL }}"
+            update_env OPENAI_MODEL "gpt-5"
+            update_env OPENAI_REPORT_MODEL "gpt-5"
+            update_env OPENAI_REVIEW_MODEL "gpt-5"
+            update_env OPENAI_VISION_MODEL "gpt-5"
+            update_env OPENAI_VISION_VERIFY_MODEL "gpt-5"
+            update_env OPENAI_REPORT_REASONING_EFFORT "medium"
+            update_env OPENAI_REVIEW_REASONING_EFFORT "medium"
+            update_env OPENAI_VISION_REASONING_EFFORT "low"
+            update_env OPENAI_VISION_VERIFY_REASONING_EFFORT "medium"
             update_env OPENAI_API_KEY "${{ secrets.OPENAI_API_KEY }}"
             update_env TELEGRAM_BOT_TOKEN "${{ secrets.TELEGRAM_BOT_TOKEN }}"
             if [ -x venv/bin/pip ]; then
