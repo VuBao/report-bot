@@ -55,6 +55,7 @@ def _preview(card, report, company, branch):
             "B2": f"{company}     {branch}",
             "B3": card["full_name"],
             "B4": card["date_of_birth"],
+            "C4": card["age"],
             "B5": card["address"],
             "E5": card["visa_expiry"],
             "B31": report["current_situation"],

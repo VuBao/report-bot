@@ -177,3 +177,19 @@ thay vì:
   highlight vùng ADDRESS thay vì ghi một địa chỉ có vẻ hợp lý vào Sheet.
 - Regression suite phải có cả địa chỉ một dòng, hai dòng hoàn chỉnh, hai dòng bị
   thiếu ký tự, và tình huống crop lượt hai vẫn không thể xác nhận.
+
+## 2026-09-16 — Có ngày sinh nhưng form không tự ghi tuổi
+
+### Nguyên nhân và invariant
+
+- Luồng cũ chỉ ghi ngày sinh vào `B4`; ô tuổi `C4` chưa có mapping nên luôn trống,
+  dù `D4` của template đã có nhãn `才`.
+- Tuổi không được suy ra bởi AI và không được tính bằng phép trừ năm đơn thuần.
+  Bot tính tuổi tròn từ ngày sinh đã validate, tại đúng ngày lập báo cáo theo múi
+  giờ `Asia/Tokyo`; chỉ cộng thêm một tuổi khi đã tới ngày sinh nhật trong năm.
+- Ngày 29/02 được tăng tuổi vào 01/03 trong năm không nhuận. Ngày sinh tương lai
+  phải bị từ chối.
+- Ngày lập báo cáo và tuổi phải dùng cùng một `report_date`, sau đó ghi `B4` và
+  `C4` trong cùng batch update và cùng cơ chế read-back verification.
+- Trước khi ghi, form phải còn nhãn `才` tại `D4`; nếu template đổi cấu trúc, bot
+  dừng thay vì suy đoán một ô tuổi khác.

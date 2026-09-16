@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -16,6 +17,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from config.sheet_config import (
     COLOR_CELL_DONE,
+    FORM_AGE_CELL,
     FORM_ADDRESS_CELL,
     FORM_COMPANY_BRANCH_CELL,
     FORM_CURRENT_REPORT_CELL,
@@ -55,6 +57,7 @@ _CARD_ASPECT_RATIO = 85.60 / 53.98
 _FRONT_ADDRESS_CROP = (0.01, 0.24, 0.99, 0.66)
 _BACK_ADDRESS_CROP = (0.02, 0.02, 0.98, 0.53)
 _ADDRESS_CROP_SCALE = 3
+_JAPAN_TIMEZONE = ZoneInfo("Asia/Tokyo")
 
 VISION_PROMPT = """
 You extract only visual facts from one front image, or optional front and back
@@ -631,9 +634,33 @@ def _parse_japanese_date(value, field, *, allow_past=True):
     return f"{parsed.year:04d}年{parsed.month:02d}月{parsed.day:02d}日"
 
 
-def _today_japanese():
-    now = datetime.now()
-    return f"作成日：{now.year}年{now.month:02d}月{now.day:02d}日"
+def _japan_today():
+    return datetime.now(_JAPAN_TIMEZONE).date()
+
+
+def _today_japanese(on_date=None):
+    current_date = on_date or _japan_today()
+    return (
+        f"作成日：{current_date.year}年"
+        f"{current_date.month:02d}月{current_date.day:02d}日"
+    )
+
+
+def _calculate_age(date_of_birth, on_date=None):
+    """Return full years of age; increment only on/after that year's birthday."""
+    canonical = _parse_japanese_date(date_of_birth, "Ngay sinh")
+    match = _DATE_RE.fullmatch(canonical)
+    birth_date = date(**{
+        key: int(part) for key, part in match.groupdict().items()
+    })
+    reference_date = on_date or _japan_today()
+    if birth_date > reference_date:
+        raise ValueError("Ngay sinh khong the nam trong tuong lai")
+    birthday_reached = (reference_date.month, reference_date.day) >= (
+        birth_date.month,
+        birth_date.day,
+    )
+    return reference_date.year - birth_date.year - (not birthday_reached)
 
 
 def validate_card(card, submitted_name, *, allow_uncertain_address=False):
@@ -648,12 +675,14 @@ def validate_card(card, submitted_name, *, allow_uncertain_address=False):
         raise ValueError("Ho ten trong payload khong khop chinh xac voi ho ten doc tren the")
 
     dob = _parse_japanese_date(_required_value(card, "date_of_birth"), "Ngay sinh")
+    age = _calculate_age(dob)
     visa_expiry = _parse_japanese_date(_required_value(card, "visa_expiry"), "Han visa")
     if allow_uncertain_address:
         front_address, _ = _value(card.get("front_address"))
         return {
             "full_name": full_name,
             "date_of_birth": dob,
+            "age": age,
             "address": front_address,
             "visa_expiry": visa_expiry,
         }
@@ -690,6 +719,7 @@ def validate_card(card, submitted_name, *, allow_uncertain_address=False):
     return {
         "full_name": full_name,
         "date_of_birth": dob,
+        "age": age,
         "address": address,
         "visa_expiry": visa_expiry,
     }
@@ -880,8 +910,8 @@ def _verify_form_layout(spreadsheet, worksheet):
     )
     if not all(_has_merge(sheet_metadata, *merge) for merge in required_merges):
         raise ValueError("Cau truc merge cua form khong dung mau da duyet")
-    labels = worksheet.batch_get(["A2", "A3", "A4", "A5", "E4"])
-    expected = ("会社名", "特定技能", "生年月日", "現在の住所", "ビザ期限")
+    labels = worksheet.batch_get(["A2", "A3", "A4", "A5", "D4", "E4"])
+    expected = ("会社名", "特定技能", "生年月日", "現在の住所", "才", "ビザ期限")
     values = [" ".join((_value_range_values(part) or [[""]])[0]) for part in labels]
     if any(label not in value for label, value in zip(expected, values)):
         raise ValueError("Nhan cua form khong dung mau da duyet")
@@ -908,11 +938,13 @@ def _write_residence_card_form_once(
         worksheet = _duplicate_template(spreadsheet, employee_name)
     _verify_form_layout(spreadsheet, worksheet)
 
+    report_date = _japan_today()
     values = {
         FORM_COMPANY_BRANCH_CELL: f"{company_name}     {branch_name}",
-        FORM_DATE_CELL: _today_japanese(),
+        FORM_DATE_CELL: _today_japanese(report_date),
         FORM_NAME_CELL: employee_name,
         FORM_DOB_CELL: card_values["date_of_birth"],
+        FORM_AGE_CELL: str(_calculate_age(card_values["date_of_birth"], report_date)),
         FORM_ADDRESS_CELL: card_values["address"],
         FORM_VISA_EXPIRY_CELL: card_values["visa_expiry"],
         FORM_CURRENT_REPORT_CELL: current_situation,

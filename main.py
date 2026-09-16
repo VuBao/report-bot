@@ -181,6 +181,7 @@ def _card_preview_text(
         f"Cong ty + chi nhanh: {payload['company_name']}     {payload['branch_name']}\n"
         f"Ho ten: {card_values['full_name']}\n"
         f"Ngay sinh: {card_values['date_of_birth']}\n"
+        f"Tuoi: {card_values.get('age', '')}\n"
         f"Dia chi: {address}\n"
         f"Han visa: {card_values['visa_expiry']}\n\n"
         f"{review_notice}"

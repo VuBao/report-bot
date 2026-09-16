@@ -83,6 +83,7 @@ Theo form trong ảnh, các ô giá trị (hoặc ô đầu của vùng merge) l
 | Ngày tạo báo cáo | `E2` (vùng merge `E2:F2`) | `作成日：YYYY年MM月DD日` |
 | Họ tên | `B3` (vùng merge `B3:C3`) | Họ tên trên thẻ, sau khi đối chiếu với dòng 2 |
 | Ngày sinh | `B4` | Ngày sinh trên thẻ, định dạng ngày Nhật thống nhất |
+| Tuổi | `C4` (`D4` là nhãn `才`) | Tuổi tròn tại ngày lập báo cáo theo giờ Nhật; chỉ tăng sau khi tới ngày sinh nhật |
 | Địa chỉ | `B5` (vùng merge `B5:D5`) | Địa chỉ hợp lệ mới nhất theo quy tắc mặt trước/mặt sau |
 | Hạn visa | `E5` (vùng merge `E5:F5`) | `在留期間満了日` trên thẻ |
 | Báo cáo — hiện trạng | `B31` | Nội dung Nhật đã dịch hoàn chỉnh |
@@ -97,7 +98,7 @@ Trước khi bật cho dữ liệu production, cần chạy chế độ **dry-ru
 
 - Mở rộng Telegram handler để nhận một `PHOTO` mặt trước hoặc album tối đa hai ảnh; caption phải đi kèm ảnh/album.
 - Tạo `services/residence_card_service.py`: tải ảnh Telegram vào bộ nhớ tạm; lượt đầu đọc toàn bộ thẻ và trả thêm cờ `address_review_required`; chỉ chạy lượt hai khi địa chỉ thiếu, confidence thấp, dữ liệu mặt sau chưa đầy đủ hoặc model còn nghi vấn. Vùng crop bao phủ toàn bộ chiều ngang ADDRESS và đủ hai dòng cho cả hai bố cục thẻ; ảnh được phóng lớn 3 lần và tăng tương phản/độ nét. Nếu lượt hai vẫn nghi vấn, model trả bounding box theo thang 0–1000, bot khoanh đỏ vùng đó và gửi để người dùng nhập `DIA CHI: ...`; khóa `XAC NHAN` cho tới khi địa chỉ được sửa thủ công. Ảnh cảnh báo không được giữ trong state/log; xóa ảnh tạm ở cả nhánh thành công/lỗi.
-- Tạo `services/residence_card_service.py`: xác định/tạo tab ứng viên từ template `FORMAT`, kiểm tra cấu trúc form, tạo preview, batch-update `B2/B3/B4/B5/E5/B31/B33` và read-back verification.
+- Tạo `services/residence_card_service.py`: xác định/tạo tab ứng viên từ template `FORMAT`, kiểm tra cấu trúc form, tạo preview, tính tuổi tròn từ ngày sinh theo ngày lập báo cáo tại Nhật, batch-update `B2/B3/B4/C4/B5/E5/B31/B33` và read-back verification.
 - Tạo trạng thái tác vụ tạm theo `chat_id` + `message_id`, tự hết hạn sau 15 phút nếu không nhận `XAC NHAN`; không lưu ảnh hoặc dữ liệu trích xuất lâu hơn phiên này.
 - Thêm audit tối thiểu không chứa PII: thời điểm, `chat_id`, ID file, tab đã chọn, kết quả `preview/confirmed/failed`, mã lỗi. Không log ảnh, OCR raw response, số thẻ hay các giá trị năm trường.
 - Tách hẳn command mới khỏi `handle_message` tạo báo cáo hiện tại để ảnh thẻ không bị gửi nhầm vào prompt báo cáo định kỳ, nhưng tái sử dụng `generate_report` cho phần nội dung từ dòng 4 trở đi.

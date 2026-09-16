@@ -53,6 +53,7 @@ class CardPayloadTests(unittest.TestCase):
             {
                 "full_name": "NGUYEN VAN HUY",
                 "date_of_birth": "1995年01月02日",
+                "age": 31,
                 "address": "",
                 "visa_expiry": "2027年12月31日",
             },
@@ -62,6 +63,7 @@ class CardPayloadTests(unittest.TestCase):
 
         self.assertIn("CAN KIEM TRA THU CONG", preview)
         self.assertIn("Bat buoc gui DIA CHI", preview)
+        self.assertIn("Tuoi: 31", preview)
 
 
 class CardManualReviewTests(unittest.IsolatedAsyncioTestCase):
